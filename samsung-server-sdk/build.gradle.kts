@@ -1,23 +1,33 @@
 plugins {
-    alias(libs.plugins.android.application)
+    alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
-    alias(libs.plugins.hilt.android)
-    alias(libs.plugins.ksp)
-    kotlin("kapt")
+    alias(libs.plugins.protobuf)
+}
+
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:${libs.versions.protobuf.get()}"
+    }
+    generateProtoTasks {
+        all().configureEach {
+            builtins {
+                maybeCreate("java").apply {
+                    option("lite")
+                }
+            }
+        }
+    }
 }
 
 android {
-    namespace = "kr.co.hconnect.samsung_sdk.example"
+    namespace = "kr.co.hconnect.samsung_server_sdk"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "kr.co.hconnect.samsung_sdk.example"
-        minSdk = 30
-        targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        minSdk = 24
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        consumerProguardFiles("consumer-rules.pro")
     }
 
     buildTypes {
@@ -36,26 +46,22 @@ android {
     kotlinOptions {
         jvmTarget = "11"
     }
-    buildFeatures {
-        viewBinding = true
-    }
 }
 
 dependencies {
-//    implementation(project(":samsung-sdk"))
-
-    // Samsung Health Sensor SDK (required at runtime)
-    implementation(files("libs/samsung-health-sensor-api-1.4.1.aar"))
-
-    // Hilt
-    implementation(libs.hilt.android)
-    kapt(libs.hilt.compiler)
-
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
-    implementation(libs.lifecycle.runtime.ktx)
-    implementation(libs.activity.ktx)
+
+    api(libs.protobuf.javalite)
+
+    implementation(libs.kotlinx.coroutines.core)
+    implementation(libs.kotlinx.coroutines.android)
+
+    implementation(libs.datastore.preferences)
+
+    implementation("kr.co.hconnect:bluetooth-sdk-android-v2:1.0.9")
+
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

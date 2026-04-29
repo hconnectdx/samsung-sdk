@@ -1,0 +1,4 @@
+-keep class com.google.protobuf.** { *; }
+-keep class kr.co.hconnect.samsung_server_sdk.proto.** { *; }
+-keepclassmembers class * extends com.google.protobuf.GeneratedMessageLite { *; }
+-keep class kr.co.hconnect.bluetooth_sdk_android_v2.** { *; }
