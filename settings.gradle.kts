@@ -1,6 +1,9 @@
 import java.io.FileInputStream
 import java.util.Properties
 
+include(":samsung-server-sdk-example")
+
+
 pluginManagement {
     repositories {
         google {
