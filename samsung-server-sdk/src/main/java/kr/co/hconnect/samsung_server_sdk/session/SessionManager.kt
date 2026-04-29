@@ -6,6 +6,7 @@ import kr.co.hconnect.samsung_server_sdk.proto.SensorBufferProto
 import kr.co.hconnect.samsung_server_sdk.proto.SensorSamples
 import kr.co.hconnect.samsung_server_sdk.proto.SensorType
 import kr.co.hconnect.samsung_server_sdk.proto.TrackingState
+import kr.co.hconnect.samsung_server_sdk.write.DataWriter
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
@@ -14,11 +15,13 @@ private const val TAG = "SessionManager"
 
 /**
  * 워치에서 수신한 [SensorBufferProto]를 처리하여 세션 상태를 관리하고
- * 파싱된 이벤트를 [ServerSdkCallback]으로 전달한다.
- *
- * BioTrackerLog의 ClientHandler / BLEService.processProto 로직과 동일하다.
+ * 파싱된 이벤트를 [ServerSdkCallback]으로 전달하며,
+ * [DataWriter]를 통해 센서 데이터를 CSV로 저장한다.
  */
-internal class SessionManager(private val callback: ServerSdkCallback) {
+internal class SessionManager(
+    private val callback: ServerSdkCallback,
+    private val dataWriter: DataWriter,
+) {
 
     @Volatile var currentSessionId: String? = null
         private set
@@ -26,10 +29,6 @@ internal class SessionManager(private val callback: ServerSdkCallback) {
     @Volatile var isRecording: Boolean = false
         private set
 
-    /**
-     * 수신된 Protobuf 메시지를 처리한다.
-     * 호출자는 코루틴 Mutex 등으로 직렬화해야 한다.
-     */
     fun process(proto: SensorBufferProto) {
         val metadata = if (proto.hasMetadata()) proto.metadata else null
         val state = metadata?.trackingState ?: TrackingState.NONE
@@ -74,6 +73,9 @@ internal class SessionManager(private val callback: ServerSdkCallback) {
         currentSessionId = sessionId
         isRecording = true
 
+        dataWriter.beginSession(sessionId)
+        callback.onStoragePath(dataWriter.currentStoragePath)
+
         Log.d(TAG, "주기 세션 시작: $sessionId")
         callback.onTrackingStarted(sessionId)
     }
@@ -84,6 +86,9 @@ internal class SessionManager(private val callback: ServerSdkCallback) {
         val sessionId = "on_demand_$timestamp"
         currentSessionId = sessionId
         isRecording = true
+
+        dataWriter.beginSession(sessionId)
+        callback.onStoragePath(dataWriter.currentStoragePath)
 
         Log.d(TAG, "즉시 세션 시작: $sessionId")
         callback.onTrackingStarted(sessionId)
@@ -96,6 +101,8 @@ internal class SessionManager(private val callback: ServerSdkCallback) {
         Log.d(TAG, "세션 종료: $sessionId")
         isRecording = false
         currentSessionId = null
+        dataWriter.closeAll()
+        callback.onStoragePath(null)
         callback.onTrackingFinished(sessionId)
     }
 
@@ -103,6 +110,7 @@ internal class SessionManager(private val callback: ServerSdkCallback) {
 
     private fun routeSamples(sessionId: String, samples: List<SensorSamples>) {
         samples.groupBy { it.sensorType }.forEach { (type: SensorType, list) ->
+            dataWriter.appendBatch(type, list)
             callback.onSensorData(sessionId, type, list)
         }
     }

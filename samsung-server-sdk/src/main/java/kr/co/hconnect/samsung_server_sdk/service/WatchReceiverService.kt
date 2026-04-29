@@ -17,35 +17,31 @@ import kr.co.hconnect.samsung_server_sdk.ble.PacketReassembler
 import kr.co.hconnect.samsung_server_sdk.ble.WatchFinder
 import kr.co.hconnect.samsung_server_sdk.session.SessionManager
 import kr.co.hconnect.samsung_server_sdk.util.Constants
+import kr.co.hconnect.samsung_server_sdk.write.DataWriter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kr.co.hconnect.bluetooth_sdk_android.gatt.BLEState
 
 private const val TAG = "WatchReceiverService"
 
-/**
- * Galaxy Watch로부터 BLE 데이터를 수신하는 포그라운드 서비스.
- *
- * 흐름:
- * 1. [onStartCommand] → [WatchFinder]로 워치 탐색 → [HCBle.connectToDevice] 연결
- * 2. `onGattServiceState` → NUS UUID 설정 → Notification 구독 → 상태 문자열 전송
- * 3. `onReceive` → [PacketReassembler]로 청크 조립 → [SessionManager]로 Protobuf 처리
- * 4. [SessionManager] → [ServerSdkCallback]으로 파싱된 이벤트 전달
- */
 @SuppressLint("MissingPermission")
 class WatchReceiverService : Service() {
 
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private val bufferMutex = Mutex()
+
+    /**
+     * BLE 데이터 처리 전용 단일 스레드 디스패처.
+     * BLE Notification 순서를 반드시 보장하기 위해 병렬도를 1로 제한한다.
+     */
+    private val bleDispatcher = Dispatchers.IO.limitedParallelism(1)
 
     private var connectedDeviceAddress: String? = null
 
     private lateinit var sessionManager: SessionManager
+    private lateinit var dataWriter: DataWriter
     private lateinit var reassembler: PacketReassembler
 
     // ── 생명주기 ───────────────────────────────────────────────────────────────
@@ -61,11 +57,10 @@ class WatchReceiverService : Service() {
             return
         }
 
-        sessionManager = SessionManager(callback)
+        dataWriter = DataWriter(this)
+        sessionManager = SessionManager(callback, dataWriter)
         reassembler = PacketReassembler { proto ->
-            serviceScope.launch {
-                bufferMutex.withLock { sessionManager.process(proto) }
-            }
+            sessionManager.process(proto)
         }
 
         HCBle.init(this)
@@ -130,7 +125,6 @@ class WatchReceiverService : Service() {
 
             onConnState = { state ->
                 when (state) {
-
                     BLEState.STATE_CONNECTED -> {
                         connectedDeviceAddress = address
                         Log.d(TAG, "워치 연결됨: $address")
@@ -139,7 +133,7 @@ class WatchReceiverService : Service() {
 
                     BLEState.STATE_DISCONNECTED -> {
                         Log.d(TAG, "워치 연결 해제: $address")
-                        reassembler.reset()
+                        serviceScope.launch(bleDispatcher) { reassembler.reset() }
                         if (sessionManager.isRecording) sessionManager.finishSession()
                         connectedDeviceAddress = null
                         SamsungServerSdk.getCallback()?.onDisconnected()
@@ -157,9 +151,9 @@ class WatchReceiverService : Service() {
 
             onReceive = { characteristic ->
                 @Suppress("DEPRECATION")
-                val data = characteristic.value ?: return@connectToDevice
-                serviceScope.launch {
-                    bufferMutex.withLock { reassembler.feed(data) }
+                val data = characteristic.value?.copyOf() ?: return@connectToDevice
+                serviceScope.launch(bleDispatcher) {
+                    reassembler.feed(data)
                 }
             },
 

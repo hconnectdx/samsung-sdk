@@ -55,6 +55,7 @@ class MainActivity : ComponentActivity() {
     private val logs = mutableStateListOf<String>()
     private val connectionState = mutableStateOf("연결 안됨")
     private val sessionState = mutableStateOf("세션 없음")
+    private val storagePath = mutableStateOf<String?>(null)
     private val isRunning = mutableStateOf(false)
     private val isInitialized = mutableStateOf(false)
 
@@ -79,6 +80,7 @@ class MainActivity : ComponentActivity() {
                     logs = logs,
                     connectionState = connectionState.value,
                     sessionState = sessionState.value,
+                    storagePath = storagePath.value,
                     isRunning = isRunning.value,
                     isInitialized = isInitialized.value,
                     onInitSdk = ::initSdk,
@@ -131,6 +133,17 @@ class MainActivity : ComponentActivity() {
                 val summary = buildSensorSummary(sensorType, samples)
                 runOnUiThread {
                     appendLog("[데이터] $sensorType × ${samples.size} — $summary")
+                }
+            }
+
+            override fun onStoragePath(path: String?) {
+                runOnUiThread {
+                    storagePath.value = path
+                    if (path != null) {
+                        appendLog("[저장] $path")
+                    } else {
+                        appendLog("[저장] 종료")
+                    }
                 }
             }
 
@@ -231,6 +244,7 @@ fun MainScreen(
     logs: List<String>,
     connectionState: String,
     sessionState: String,
+    storagePath: String?,
     isRunning: Boolean,
     isInitialized: Boolean,
     onInitSdk: () -> Unit,
@@ -257,7 +271,7 @@ fun MainScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             // ── 상태 표시 ────────────────────────────────────────────────────
-            StatusSection(connectionState, sessionState, isRunning)
+            StatusSection(connectionState, sessionState, storagePath, isRunning)
 
             HorizontalDivider()
 
@@ -279,7 +293,12 @@ fun MainScreen(
 }
 
 @Composable
-fun StatusSection(connectionState: String, sessionState: String, isRunning: Boolean) {
+fun StatusSection(
+    connectionState: String,
+    sessionState: String,
+    storagePath: String?,
+    isRunning: Boolean,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(
             text = "상태",
@@ -289,6 +308,7 @@ fun StatusSection(connectionState: String, sessionState: String, isRunning: Bool
         StatusRow("서비스", if (isRunning) "실행 중" else "정지", isRunning)
         StatusRow("BLE 연결", connectionState, connectionState.startsWith("연결됨"))
         StatusRow("세션", sessionState, sessionState.startsWith("기록 중"))
+        StatusRow("저장 경로", storagePath ?: "없음", storagePath != null)
     }
 }
 

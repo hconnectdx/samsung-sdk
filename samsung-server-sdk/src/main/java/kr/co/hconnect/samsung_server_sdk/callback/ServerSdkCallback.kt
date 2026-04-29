@@ -47,6 +47,13 @@ interface ServerSdkCallback {
         samples: List<SensorSamples>
     )
 
+    /**
+     * 세션 데이터 저장 경로가 결정되었을 때 호출된다.
+     *
+     * @param path CSV 파일이 저장되는 폴더 경로 (null이면 저장 종료)
+     */
+    fun onStoragePath(path: String?) {}
+
     /** SDK 내부 오류가 발생했을 때 호출된다. */
     fun onError(message: String)
 }
