@@ -1,6 +1,7 @@
 package kr.co.hconnect.samsung_sdk_example.presentation
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -66,7 +67,8 @@ class MainActivity : ComponentActivity() {
             addLog("권한 모두 승인됨", LogLevel.SUCCESS)
         } else {
             val denied = results.filter { !it.value }.keys.map { it.substringAfterLast('.') }
-            addLog("권한 거부: $denied", LogLevel.ERROR)
+            addLog("권한 거부: $denied → 설정에서 직접 허용 필요", LogLevel.ERROR)
+            openAppSettings()
         }
     }
 
@@ -99,7 +101,8 @@ class MainActivity : ComponentActivity() {
         val perms = mutableListOf(
             Manifest.permission.BODY_SENSORS,
             Manifest.permission.ACTIVITY_RECOGNITION,
-            Manifest.permission.HIGH_SAMPLING_RATE_SENSORS
+            Manifest.permission.HIGH_SAMPLING_RATE_SENSORS,
+            "com.samsung.android.hardware.sensormanager.permission.READ_ADDITIONAL_HEALTH_DATA"
         )
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             perms.add(Manifest.permission.POST_NOTIFICATIONS)
@@ -109,10 +112,32 @@ class MainActivity : ComponentActivity() {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
         if (notGranted.isNotEmpty()) {
-            permissionLauncher.launch(notGranted.toTypedArray())
+            val shouldOpenSettings = notGranted.any {
+                !shouldShowRequestPermissionRationale(it) &&
+                    getSharedPreferences("perm_prefs", MODE_PRIVATE)
+                        .getBoolean("asked_$it", false)
+            }
+
+            if (shouldOpenSettings) {
+                addLog("권한이 영구 거부됨 → 설정 화면 이동", LogLevel.WARN)
+                openAppSettings()
+            } else {
+                notGranted.forEach {
+                    getSharedPreferences("perm_prefs", MODE_PRIVATE)
+                        .edit().putBoolean("asked_$it", true).apply()
+                }
+                permissionLauncher.launch(notGranted.toTypedArray())
+            }
         } else {
             addLog("권한 이미 승인됨", LogLevel.INFO)
         }
+    }
+
+    private fun openAppSettings() {
+        val intent = Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+            data = android.net.Uri.fromParts("package", packageName, null)
+        }
+        startActivity(intent)
     }
 
     private fun initSdk() {
@@ -125,8 +150,16 @@ class MainActivity : ComponentActivity() {
             addLog("[콜백] 데이터 수신 ${data.size}B", LogLevel.DATA)
             true
         }
+
+        SamsungHealthSdk.setMeasurementDuration(this, 120_000L)
+        SamsungHealthSdk.setAlarmSlotMinutes(this, intArrayOf(1,21, 31, 42))
+        SamsungHealthSdk.setAlarmSensorTypes(this, setOf(SensorType.ACC, SensorType.PPG_GREEN_25))
+
         sdkInitialized.value = true
-        addLog("SDK 초기화 완료", LogLevel.SUCCESS)
+
+        val slots = SamsungHealthSdk.getAlarmSlotMinutes(this).joinToString(",")
+        val duration = SamsungHealthSdk.getMeasurementDuration(this) / 1000
+        addLog("SDK 초기화 완료 | 측정=${duration}초 | 슬롯=[${slots}]분", LogLevel.SUCCESS)
     }
 
     private fun startOnDemandPpg25() {
@@ -150,19 +183,22 @@ class MainActivity : ComponentActivity() {
 
     private fun startPeriodic() {
         if (!checkInit()) return
-        val durationMs = 120_000L
-        val slotMinute = 1
-        val types = setOf(SensorType.ACC, SensorType.PPG_GREEN_25)
-        SamsungHealthSdk.setMeasurementDuration(this, durationMs)
-        addLog("주기 측정 시작: 2분, slot=$slotMinute", LogLevel.INFO)
+        val durationMs = SamsungHealthSdk.getMeasurementDuration(this)
+        val slots = SamsungHealthSdk.getAlarmSlotMinutes(this)
+        val types = SamsungHealthSdk.getAlarmSensorTypes(this)
+            ?: setOf(SensorType.ACC, SensorType.PPG_GREEN_25)
+        val slotMinute = slots.firstOrNull() ?: 1
+        addLog("주기 측정: ${durationMs/1000}초, slot=$slotMinute, 센서=$types", LogLevel.INFO)
         SamsungHealthSdk.startPeriodicTracking(this, durationMs, slotMinute, types)
     }
 
     private fun scheduleAlarm() {
         if (!checkInit()) return
-        val types = setOf(SensorType.ACC, SensorType.PPG_GREEN_25)
+        val types = SamsungHealthSdk.getAlarmSensorTypes(this)
+            ?: setOf(SensorType.ACC, SensorType.PPG_GREEN_25)
+        val slots = SamsungHealthSdk.getAlarmSlotMinutes(this).joinToString(",")
         SamsungHealthSdk.schedulePeriodicAlarm(this, types)
-        addLog("주기 알람 스케줄링 시작", LogLevel.SUCCESS)
+        addLog("알람 시작 | 슬롯=[${slots}]분 | 센서=$types", LogLevel.SUCCESS)
     }
 
     private fun cancelAlarm() {

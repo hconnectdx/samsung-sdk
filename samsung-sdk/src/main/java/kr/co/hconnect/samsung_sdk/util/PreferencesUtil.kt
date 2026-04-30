@@ -15,6 +15,8 @@ object PreferencesUtil {
     private val HAS_RUN_BEFORE = booleanPreferencesKey("has_run_before")
     private val MEASUREMENT_DURATION_MS = longPreferencesKey("measurement_duration_ms")
     private val MEASUREMENT_TYPE = stringPreferencesKey("measurement_type")
+    private val ALARM_SLOT_MINUTES = stringPreferencesKey("alarm_slot_minutes")
+    private val ALARM_SENSOR_TYPES = stringPreferencesKey("alarm_sensor_types")
 
     suspend fun setHasRunBefore(context: Context, value: Boolean) {
         context.sdkDataStore.edit { it[HAS_RUN_BEFORE] = value }
@@ -36,4 +38,38 @@ object PreferencesUtil {
 
     suspend fun getMeasurementType(context: Context): String? =
         context.sdkDataStore.data.map { it[MEASUREMENT_TYPE] }.first()
+
+    // ── 주기 알람 슬롯 분 ──
+
+    suspend fun setAlarmSlotMinutes(context: Context, minutes: IntArray) {
+        val value = minutes.joinToString(",")
+        context.sdkDataStore.edit { it[ALARM_SLOT_MINUTES] = value }
+    }
+
+    suspend fun getAlarmSlotMinutes(context: Context): IntArray {
+        val raw = context.sdkDataStore.data.map { it[ALARM_SLOT_MINUTES] }.first()
+            ?: return Constants.DEFAULT_ALARM_MINUTES
+        return try {
+            raw.split(",").map { it.trim().toInt() }.toIntArray()
+        } catch (_: Exception) {
+            Constants.DEFAULT_ALARM_MINUTES
+        }
+    }
+
+    // ── 주기 알람 센서 타입 ──
+
+    suspend fun setAlarmSensorTypes(context: Context, sensorTypes: IntArray) {
+        val value = sensorTypes.joinToString(",")
+        context.sdkDataStore.edit { it[ALARM_SENSOR_TYPES] = value }
+    }
+
+    suspend fun getAlarmSensorTypes(context: Context): IntArray? {
+        val raw = context.sdkDataStore.data.map { it[ALARM_SENSOR_TYPES] }.first()
+            ?: return null
+        return try {
+            raw.split(",").map { it.trim().toInt() }.toIntArray()
+        } catch (_: Exception) {
+            null
+        }
+    }
 }

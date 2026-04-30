@@ -106,7 +106,7 @@ class HealthTrackerManager : TrackerManager {
             }
 
             override fun onFlushCompleted() { Log.i(TAG, "PPG25 Tracker Flush Completed") }
-            override fun onError(e: HealthTracker.TrackerError?) { Log.i(TAG, "PPG25 Tracker Error") }
+            override fun onError(e: HealthTracker.TrackerError?) { Log.e(TAG, "PPG25 Tracker Error: $e (${e?.name})") }
         }
         ppg25Tracker.setEventListener(listener)
     }
@@ -181,7 +181,7 @@ class HealthTrackerManager : TrackerManager {
             }
 
             override fun onFlushCompleted() { Log.i(TAG, "PPG100 Tracker Flush Completed") }
-            override fun onError(e: HealthTracker.TrackerError?) { Log.i(TAG, "PPG100 Tracker Error") }
+            override fun onError(e: HealthTracker.TrackerError?) { Log.e(TAG, "PPG100 Tracker Error: $e (${e?.name})") }
         }
         ppg100Tracker.setEventListener(listener)
     }
@@ -219,7 +219,7 @@ class HealthTrackerManager : TrackerManager {
             }
 
             override fun onFlushCompleted() { Log.i(TAG, "ECG Tracker Flush Completed") }
-            override fun onError(e: HealthTracker.TrackerError?) { Log.i(TAG, "ECG Tracker Error") }
+            override fun onError(e: HealthTracker.TrackerError?) { Log.e(TAG, "ECG Tracker Error: $e (${e?.name})") }
         }
         ecgTracker.setEventListener(listener)
     }

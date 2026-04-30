@@ -9,7 +9,7 @@ object CalSlotMinute {
     @JvmStatic
     fun computeNextSlotUtc(
         nowUtc: Long,
-        slotMinutes: IntArray = Constants.PERIODIC_ALARM_MINUTE
+        slotMinutes: IntArray = Constants.DEFAULT_ALARM_MINUTES
     ): Long {
         val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
             timeInMillis = nowUtc
