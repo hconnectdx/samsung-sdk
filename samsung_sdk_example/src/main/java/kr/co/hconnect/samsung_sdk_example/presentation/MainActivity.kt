@@ -300,10 +300,10 @@ fun MainScreen(
                 )
             }
 
-            // 온디맨드 ACC+PPG25
+            // 온디맨드 ACC+PPG25 (워치 폭: 2줄)
             item {
                 SdkButton(
-                    text = "온디맨드: ACC+PPG25",
+                    text = "온디맨드\nACC+PPG25",
                     color = Color(0xFF2196F3),
                     onClick = onStartOnDemandPpg25
                 )
@@ -312,7 +312,7 @@ fun MainScreen(
             // 온디맨드 ACC+PPG100+ECG
             item {
                 SdkButton(
-                    text = "온디맨드: ACC+PPG100+ECG",
+                    text = "온디맨드\nACC·PPG100·ECG",
                     color = Color(0xFF3F51B5),
                     onClick = onStartOnDemandPpg100Ecg
                 )
@@ -428,8 +428,9 @@ fun SdkButton(
         label = {
             Text(
                 text = text,
-                fontSize = 12.sp,
-                maxLines = 1,
+                fontSize = 10.sp,
+                lineHeight = 12.sp,
+                maxLines = 2,
                 modifier = Modifier.fillMaxWidth(),
                 textAlign = TextAlign.Center
             )
