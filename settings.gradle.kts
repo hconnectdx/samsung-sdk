@@ -1,6 +1,12 @@
 import java.io.FileInputStream
 import java.util.Properties
 
+include(":samsung-sdk")
+
+
+include(":samsung_sdk_example")
+
+
 include(":samsung-server-sdk-example")
 
 
@@ -42,6 +48,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "SamsungSDK"
-include(":samsung-sdk-example")
-//include(":samsung-sdk")
 include(":samsung-server-sdk")

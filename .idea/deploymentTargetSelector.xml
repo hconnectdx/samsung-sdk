@@ -8,6 +8,9 @@
       <SelectionState runConfigName="samsung-server-sdk-example">
         <option name="selectionMode" value="DROPDOWN" />
       </SelectionState>
+      <SelectionState runConfigName="samsung_sdk_example">
+        <option name="selectionMode" value="DROPDOWN" />
+      </SelectionState>
     </selectionStates>
   </component>
 </project>

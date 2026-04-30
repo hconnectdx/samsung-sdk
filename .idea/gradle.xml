@@ -10,9 +10,10 @@
         <option name="modules">
           <set>
             <option value="$PROJECT_DIR$" />
-            <option value="$PROJECT_DIR$/samsung-sdk-example" />
+            <option value="$PROJECT_DIR$/samsung-sdk" />
             <option value="$PROJECT_DIR$/samsung-server-sdk" />
             <option value="$PROJECT_DIR$/samsung-server-sdk-example" />
+            <option value="$PROJECT_DIR$/samsung_sdk_example" />
           </set>
         </option>
       </GradleProjectSettings>

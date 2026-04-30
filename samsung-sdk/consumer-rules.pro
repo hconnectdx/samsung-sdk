@@ -1,2 +1,0 @@
--keep class kr.co.hconnect.samsung_sdk.proto.** { *; }
--keep class com.samsung.android.service.health.tracking.** { *; }
