@@ -1,0 +1,4 @@
+-keep class com.google.protobuf.** { *; }
+-keep class kr.co.hconnect.samsung_sdk.proto.** { *; }
+-keepclassmembers class * extends com.google.protobuf.GeneratedMessageLite { *; }
+-keep class com.samsung.android.service.health.tracking.** { *; }
