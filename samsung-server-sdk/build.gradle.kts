@@ -1,8 +1,19 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.protobuf)
+    `maven-publish`
 }
+
+val localProperties = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.exists()) load(FileInputStream(file))
+}
+
+val libVersion = "1.0.0"
 
 protobuf {
     protoc {
@@ -65,4 +76,29 @@ dependencies {
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
+}
+
+afterEvaluate {
+    publishing {
+        publications {
+            create<MavenPublication>("release") {
+                from(components["release"])
+
+                groupId = "kr.co.hconnect"
+                artifactId = "samsung-server-sdk"
+                version = libVersion
+            }
+        }
+
+        repositories {
+            maven {
+                name = "GitHubPackages"
+                url = uri("https://maven.pkg.github.com/hconnectdx/samsung-sdk")
+                credentials {
+                    username = localProperties.getProperty("githubUsername") ?: System.getenv("GITHUB_USERNAME")
+                    password = localProperties.getProperty("githubAccessToken") ?: System.getenv("GITHUB_TOKEN")
+                }
+            }
+        }
+    }
 }

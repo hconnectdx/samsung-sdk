@@ -128,6 +128,9 @@ class WatchReceiverService : Service() {
                     BLEState.STATE_CONNECTED -> {
                         connectedDeviceAddress = address
                         Log.d(TAG, "워치 연결됨: $address")
+                        HCBle.getGattController(address)?.bluetoothGatt
+                            ?.requestMtu(512)
+                            .also { Log.d(TAG, "MTU 협상 요청 (512)") }
                         SamsungServerSdk.getCallback()?.onConnected(device.name ?: address)
                     }
 
