@@ -5,6 +5,7 @@ import kr.co.hconnect.samsung_server_sdk.api.CsvBuilder
 import kr.co.hconnect.samsung_server_sdk.api.HealthOnClient
 import kr.co.hconnect.samsung_server_sdk.api.Protocol2_1API
 import kr.co.hconnect.samsung_server_sdk.api.Protocol8_1API
+import kr.co.hconnect.samsung_server_sdk.api.SleepStartAPI
 import kr.co.hconnect.samsung_server_sdk.ble.MeasurementType
 import kr.co.hconnect.samsung_server_sdk.callback.ServerSdkCallback
 import kr.co.hconnect.samsung_server_sdk.proto.SensorBufferProto
@@ -190,6 +191,26 @@ internal class SessionManager(
 
         Log.d(TAG, "측정 세션 시작: type=$type sessionId=$sessionId")
         callback.onTrackingStarted(sessionId)
+
+        if (type == MeasurementType.SLEEP) {
+            apiScope.launch { notifySleepStart() }
+        }
+    }
+
+    /** 수면 측정 시작 시 서버에 start 알림을 전송한다. */
+    private fun notifySleepStart() {
+        try {
+            val response = SleepStartAPI.requestPost()
+            if (response.success) {
+                Log.d(TAG, "sleep/start 전송 성공 status=${response.httpCode}")
+            } else {
+                Log.e(TAG, "sleep/start 전송 실패 status=${response.httpCode} body=${response.body}")
+                callback.onError("sleep/start 전송 실패 (status=${response.httpCode})")
+            }
+        } catch (t: Throwable) {
+            Log.e(TAG, "sleep/start 전송 중 예외", t)
+            callback.onError("sleep/start 전송 중 예외: ${t.message}")
+        }
     }
 
     // ── 세션 종료 ─────────────────────────────────────────────────────────────
