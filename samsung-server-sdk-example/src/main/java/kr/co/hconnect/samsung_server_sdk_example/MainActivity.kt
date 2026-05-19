@@ -46,6 +46,7 @@ import kr.co.hconnect.samsung_server_sdk.callback.ServerSdkCallback
 import kr.co.hconnect.samsung_server_sdk.proto.SensorSamples
 import kr.co.hconnect.samsung_server_sdk.proto.SensorType
 import kr.co.hconnect.samsung_server_sdk_example.ui.theme.SamsungSDKTheme
+import kr.co.hconnect.samsung_server_sdk_example.BuildConfig
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -95,7 +96,11 @@ class MainActivity : ComponentActivity() {
     // ── SDK 기능 ──────────────────────────────────────────────────────────────
 
     private fun initSdk() {
-        SamsungServerSdk.init(object : ServerSdkCallback {
+        SamsungServerSdk.init(
+            baseUrl      = BuildConfig.API_URL,
+            clientId     = BuildConfig.CLIENT_ID,
+            clientSecret = BuildConfig.CLIENT_SECRET,
+            callback     = object : ServerSdkCallback {
 
             override fun onConnected(deviceName: String) {
                 runOnUiThread {
@@ -153,6 +158,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
         })
+        SamsungServerSdk.setHealthOnUser(userSno = 0, userAge = 0)
 
         isInitialized.value = true
         appendLog("SDK 초기화 완료")

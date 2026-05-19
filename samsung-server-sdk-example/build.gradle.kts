@@ -16,6 +16,14 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // debug 기본값 (stg)
+        buildConfigField("String", "API_URL",       "\"https://mapi-stg.health-on.co.kr/\"")
+        buildConfigField("String", "CLIENT_ID",     "\"3270e7da-55b1-4dd4-abb9-5c71295b849b\"")
+        buildConfigField(
+            "String", "CLIENT_SECRET",
+            "\"eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9.eyJpbmZyYSI6IkhlYWx0aE9uLVN0YWdpbmciLCJjbGllbnQtaWQiOiIzMjcwZTdkYS01NWIxLTRkZDQtYWJiOS01YzcxMjk1Yjg0OWIifQ.u0rBK-2t3l4RZ113EzudZsKb0Us9PEtiPcFDBv--gYdJf9yZJQOpo41XqzbgSdDa6Z1VDrgZXiOkIZOTeeaEYA\""
+        )
     }
 
     buildTypes {
@@ -24,6 +32,14 @@ android {
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
+            )
+
+            // release 는 live 서버
+            buildConfigField("String", "API_URL",       "\"https://mapi.health-on.co.kr/\"")
+            buildConfigField("String", "CLIENT_ID",     "\"659c95fd-900a-4a9a-8f61-1888334a3c7b\"")
+            buildConfigField(
+                "String", "CLIENT_SECRET",
+                "\"eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9.eyJpbmZyYSI6IkhlYWx0aE9uLUxpdmUiLCJjbGllbnQtaWQiOiI2NTljOTVmZC05MDBhLTRhOWEtOGY2MS0xODg4MzM0YTNjN2IifQ.GV8Fg5pY-08GlZI0UUFLIqtrmlwnU7kQ-soN6VFlj_usXBex7mv3-vjkAZxV5Yb2MMecifUqwOQpikyirX9aBw\""
             )
         }
     }
@@ -36,6 +52,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 

@@ -71,6 +71,9 @@ dependencies {
 
     implementation(libs.datastore.preferences)
 
+    implementation(libs.okhttp)
+    implementation(libs.okhttp.logging.interceptor)
+
     implementation("kr.co.hconnect:bluetooth-sdk-android-v2:1.0.9")
 
     testImplementation(libs.junit)

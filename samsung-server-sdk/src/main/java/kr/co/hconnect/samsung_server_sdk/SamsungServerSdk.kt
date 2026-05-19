@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import androidx.annotation.RequiresApi
+import kr.co.hconnect.samsung_server_sdk.api.HealthOnClient
 import kr.co.hconnect.samsung_server_sdk.callback.ServerSdkCallback
 import kr.co.hconnect.samsung_server_sdk.service.WatchReceiverService
 import kr.co.hconnect.samsung_server_sdk.util.Constants
@@ -12,20 +13,27 @@ import kr.co.hconnect.samsung_server_sdk.util.Constants
  * samsung-server-sdk 진입점.
  *
  * ## 사용 순서
- * 1. [init] — 이벤트 콜백 등록 (서비스 시작 전에 반드시 호출)
- * 2. [start] — Galaxy Watch BLE 연결 및 데이터 수신 시작
- * 3. [stop]  — 서비스 중지 및 BLE 연결 해제
+ * 1. [init] — 이벤트 콜백 + HealthOn 서버 정보 등록 (서비스 시작 전에 반드시 호출)
+ * 2. [setHealthOnUser] — 사용자 정보(userSno, userAge) 설정
+ * 3. [start] — Galaxy Watch BLE 연결 및 데이터 수신 시작
+ * 4. [stop]  — 서비스 중지 및 BLE 연결 해제
  *
  * ## 예시
  * ```kotlin
- * SamsungServerSdk.init(object : ServerSdkCallback {
- *     override fun onConnected(deviceName: String) { ... }
- *     override fun onDisconnected() { ... }
- *     override fun onTrackingStarted(sessionId: String) { ... }
- *     override fun onTrackingFinished(sessionId: String) { ... }
- *     override fun onSensorData(sessionId, sensorType, samples) { ... }
- *     override fun onError(message: String) { ... }
- * })
+ * SamsungServerSdk.init(
+ *     baseUrl      = "https://mapi-stg.health-on.co.kr/",
+ *     clientId     = "...",
+ *     clientSecret = "...",
+ *     callback     = object : ServerSdkCallback {
+ *         override fun onConnected(deviceName: String) { ... }
+ *         override fun onDisconnected() { ... }
+ *         override fun onTrackingStarted(sessionId: String) { ... }
+ *         override fun onTrackingFinished(sessionId: String) { ... }
+ *         override fun onSensorData(sessionId, sensorType, samples) { ... }
+ *         override fun onError(message: String) { ... }
+ *     }
+ * )
+ * SamsungServerSdk.setHealthOnUser(userSno = 1234, userAge = 30)
  *
  * SamsungServerSdk.start(context)
  * // ...
@@ -38,11 +46,24 @@ object SamsungServerSdk {
     @Volatile private var running: Boolean = false
 
     /**
-     * SDK를 초기화하고 이벤트 콜백을 등록한다.
+     * SDK를 초기화한다.
+     *
+     * HealthOn 서버 정보([baseUrl], [clientId], [clientSecret])를 함께 등록하며,
      * [start] 호출 전에 반드시 한 번 호출해야 한다.
+     *
+     * @param baseUrl      HealthOn API 서버 주소 (ex. "https://mapi-stg.health-on.co.kr/")
+     * @param clientId     서버에서 발급한 ClientId 헤더 값
+     * @param clientSecret 서버에서 발급한 ClientSecret 헤더 값
+     * @param callback     워치 연결 / 측정 / 오류 이벤트를 수신할 콜백
      */
-    fun init(callback: ServerSdkCallback) {
+    fun init(
+        baseUrl: String,
+        clientId: String,
+        clientSecret: String,
+        callback: ServerSdkCallback,
+    ) {
         this.callback = callback
+        HealthOnClient.init(baseUrl, clientId, clientSecret)
     }
 
     /**
@@ -79,4 +100,14 @@ object SamsungServerSdk {
 
     /** 내부용: 서비스에서 콜백을 참조하기 위해 사용. */
     internal fun getCallback(): ServerSdkCallback? = callback
+
+    // ── HealthOn 사용자 정보 ──
+
+    /**
+     * protocol2-1 전송 시 함께 보낼 사용자 정보(userSno, userAge)를 설정한다.
+     * [init] 호출 이후 언제든 변경 가능하다.
+     */
+    fun setHealthOnUser(userSno: Int, userAge: Int) {
+        HealthOnClient.setUser(userSno, userAge)
+    }
 }
