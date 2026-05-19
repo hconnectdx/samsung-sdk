@@ -158,7 +158,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
         })
-        SamsungServerSdk.setHealthOnUser(userSno = 0, userAge = 0)
+        SamsungServerSdk.setHealthOnUser(userSno = 999, userAge = 111)
 
         isInitialized.value = true
         appendLog("SDK 초기화 완료")

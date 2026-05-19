@@ -43,11 +43,11 @@ object HealthOnClient {
         private set
 
     @Volatile
-    var userSno: Int = 0
+    var userSno: Int = 4
         private set
 
     @Volatile
-    var userAge: Int = 0
+    var userAge: Int = 30
         private set
 
     val isInitialized: Boolean get() = initialized
@@ -60,6 +60,7 @@ object HealthOnClient {
      * @param clientSecret 서버에서 발급한 ClientSecret
      * @param connectTimeoutMs 연결 타임아웃(ms) (기본 15초)
      * @param readTimeoutMs    응답 타임아웃(ms) (기본 30초)
+     * @param writeTimeoutMs   요청 전송 타임아웃(ms) (기본 60초, 대용량 멀티파트 업로드 여유)
      */
     @Synchronized
     fun init(
@@ -68,26 +69,36 @@ object HealthOnClient {
         clientSecret: String,
         connectTimeoutMs: Long = 15_000L,
         readTimeoutMs: Long = 30_000L,
+        writeTimeoutMs: Long = 60_000L,
     ) {
         this.baseUrl = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
         this.clientId = clientId
         this.clientSecret = clientSecret
 
-        // 헤더는 전체, 바디는 BODY 레벨로 출력 (큰 파일 업로드 바디는 제외)
+        // ⚠️ BODY 레벨은 절대 사용 금지.
+        // 우리는 PPG/ECG/IMU CSV 멀티파트(수백 KB) 를 업로드하는데,
+        // HttpLoggingInterceptor.BODY 는 요청 바디를 통째로 logcat 에 출력하여
+        // wall-clock 을 크게 늘리고 결국 Azure Gateway 의 idle timeout(≈20초)을 넘겨
+        // 504 Gateway Time-out 을 유발한다.
+        // 응답 바디는 아래의 responseBodyLogInterceptor 가 별도로 잘라서 출력한다.
         val logging = HttpLoggingInterceptor { message -> Log.d(TAG, message) }.apply {
-            level = HttpLoggingInterceptor.Level.BODY
+            level = HttpLoggingInterceptor.Level.HEADERS
         }
 
         client = OkHttpClient.Builder()
             .connectTimeout(connectTimeoutMs, TimeUnit.MILLISECONDS)
             .readTimeout(readTimeoutMs, TimeUnit.MILLISECONDS)
-            .writeTimeout(readTimeoutMs, TimeUnit.MILLISECONDS)
+            .writeTimeout(writeTimeoutMs, TimeUnit.MILLISECONDS)
             .addInterceptor(logging)
             .addInterceptor(responseBodyLogInterceptor())
             .build()
 
         initialized = true
-        Log.d(TAG, "HealthOnClient initialized. baseUrl=$baseUrl")
+        Log.d(
+            TAG,
+            "HealthOnClient initialized. baseUrl=$baseUrl " +
+                    "(connectTo=${connectTimeoutMs}ms, readTo=${readTimeoutMs}ms, writeTo=${writeTimeoutMs}ms)"
+        )
     }
 
     /**

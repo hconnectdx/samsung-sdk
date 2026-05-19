@@ -59,9 +59,10 @@ class WatchReceiverService : Service() {
 
         dataWriter = DataWriter(this)
         sessionManager = SessionManager(callback, dataWriter)
-        reassembler = PacketReassembler { proto ->
-            sessionManager.process(proto)
-        }
+        reassembler = PacketReassembler(
+            onMessage = { proto -> sessionManager.process(proto) },
+            onMeasurementType = { type -> sessionManager.onMeasurementType(type) },
+        )
 
         HCBle.init(this)
     }

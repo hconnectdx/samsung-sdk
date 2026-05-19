@@ -53,4 +53,22 @@ internal object CsvBuilder {
         }
         return sb.toString().toByteArray(Charsets.UTF_8)
     }
+
+    /**
+     * IMU (ACC) CSV — protocol8-1 의 `imuFile` 용.
+     * 헤더: `x, y, z`
+     */
+    fun buildImuCsv(samples: List<SensorSamples>): ByteArray {
+        val sb = StringBuilder(16 + samples.size * 18)
+        sb.append("x,y,z").append(EOL)
+        for (s in samples) {
+            if (!s.hasAcc25Data()) continue
+            with(s.acc25Data) {
+                sb.append(x).append(',')
+                    .append(y).append(',')
+                    .append(z).append(EOL)
+            }
+        }
+        return sb.toString().toByteArray(Charsets.UTF_8)
+    }
 }
