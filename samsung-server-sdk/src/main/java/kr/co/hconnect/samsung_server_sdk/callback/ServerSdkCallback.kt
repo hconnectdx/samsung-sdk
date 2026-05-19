@@ -54,6 +54,14 @@ interface ServerSdkCallback {
      */
     fun onStoragePath(path: String?) {}
 
+    /**
+     * 수면 측정이 완전히 종료되어 `/poli/sleep/stop` 응답을 수신했을 때 호출된다.
+     *
+     * @param sessionId    종료된 세션 식별자 (yyyyMMdd_HHmmss)
+     * @param sleepQuality 수면 품질 점수. 서버가 값을 내려주지 않으면 null.
+     */
+    fun onSleepFinished(sessionId: String, sleepQuality: Int?) {}
+
     /** SDK 내부 오류가 발생했을 때 호출된다. */
     fun onError(message: String)
 }

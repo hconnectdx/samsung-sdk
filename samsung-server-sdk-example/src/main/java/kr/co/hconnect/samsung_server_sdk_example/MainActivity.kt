@@ -152,6 +152,12 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            override fun onSleepFinished(sessionId: String, sleepQuality: Int?) {
+                runOnUiThread {
+                    appendLog("[수면 완료] sessionId=$sessionId sleepQuality=$sleepQuality")
+                }
+            }
+
             override fun onError(message: String) {
                 runOnUiThread {
                     appendLog("[오류] $message")

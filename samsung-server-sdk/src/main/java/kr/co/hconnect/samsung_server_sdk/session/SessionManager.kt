@@ -6,6 +6,7 @@ import kr.co.hconnect.samsung_server_sdk.api.HealthOnClient
 import kr.co.hconnect.samsung_server_sdk.api.Protocol2_1API
 import kr.co.hconnect.samsung_server_sdk.api.Protocol8_1API
 import kr.co.hconnect.samsung_server_sdk.api.SleepStartAPI
+import kr.co.hconnect.samsung_server_sdk.api.SleepStopAPI
 import kr.co.hconnect.samsung_server_sdk.ble.MeasurementType
 import kr.co.hconnect.samsung_server_sdk.callback.ServerSdkCallback
 import kr.co.hconnect.samsung_server_sdk.proto.SensorBufferProto
@@ -86,7 +87,18 @@ internal class SessionManager(
             }
 
             TrackingState.FINISH -> {
-                finishSession()
+                if (currentMeasurementType == MeasurementType.SLEEP) {
+                    // 수면은 1분 단위 청크마다 FINISH 가 발생한다.
+                    // protocol8-1 은 청크마다 전송하되, 세션(isRecording)은 유지한다.
+                    // 실제 수면 종료는 MEASUREMENT_TYPE:STOP 텍스트로만 판정한다.
+                    val sessionId = currentSessionId
+                    if (sessionId != null) {
+                        Log.d(TAG, "SLEEP 청크 FINISH — protocol8-1 전송 (session=$sessionId)")
+                        apiScope.launch { sendProtocol8_1Result(sessionId) }
+                    }
+                } else {
+                    finishSession()
+                }
             }
 
             else -> Unit
@@ -197,6 +209,28 @@ internal class SessionManager(
         }
     }
 
+    /** 수면 측정 종료 후 서버에 stop 알림을 전송하고, sleepQuality 를 콜백으로 전달한다. */
+    private fun notifySleepStop(sessionId: String) {
+        try {
+            val response = SleepStopAPI.requestPost(sessionId = sessionId)
+            if (response.success) {
+                Log.d(
+                    TAG,
+                    "sleep/stop 전송 성공 status=${response.httpCode} sleepQuality=${response.sleepQuality}"
+                )
+                callback.onSleepFinished(sessionId, response.sleepQuality)
+            } else {
+                Log.e(TAG, "sleep/stop 전송 실패 status=${response.httpCode} body=${response.body}")
+                callback.onError("sleep/stop 전송 실패 (status=${response.httpCode})")
+                callback.onSleepFinished(sessionId, null)
+            }
+        } catch (t: Throwable) {
+            Log.e(TAG, "sleep/stop 전송 중 예외", t)
+            callback.onError("sleep/stop 전송 중 예외: ${t.message}")
+            callback.onSleepFinished(sessionId, null)
+        }
+    }
+
     /** 수면 측정 시작 시 서버에 start 알림을 전송한다. */
     private fun notifySleepStart() {
         try {
@@ -227,11 +261,17 @@ internal class SessionManager(
         callback.onTrackingFinished(sessionId)
 
         when (type) {
-            MeasurementType.SLEEP -> sendProtocol8_1Result(sessionId)
+            MeasurementType.SLEEP -> {
+                apiScope.launch {
+                    // ① 수면 종료 즉시 stop 호출 (8시간 경과 or 사용자 종료 시점)
+                    notifySleepStop(sessionId)
+                    // ② 수집된 센서 데이터 업로드
+                    sendProtocol8_1Result(sessionId)
+                }
+            }
             MeasurementType.ECG -> sendProtocol2_1Result(sessionId)
             else -> {
                 // 워치의 MEASUREMENT_TYPE:* 알림을 한 번도 받지 못한 레거시/예외 경로.
-                // 데이터가 어느 쪽인지 알 수 없으므로 일상(protocol2-1) 로 fallback 한다.
                 Log.w(
                     TAG,
                     "currentMeasurementType=null — protocol2-1(일상)로 fallback 합니다. session=$sessionId"
@@ -337,6 +377,7 @@ internal class SessionManager(
      *
      * sessionId 는 protocol8-1 스펙(`yyyyMMdd_HHmmss`, 15자) 을 따른다.
      */
+    /** finishSession() 의 apiScope.launch 안에서 호출된다 (suspend 불필요, 블로킹 OK). */
     private fun sendProtocol8_1Result(sessionId: String) {
         val ppg = snapshotPpg()
         val acc = snapshotAcc()
@@ -361,37 +402,35 @@ internal class SessionManager(
             return
         }
 
-        apiScope.launch {
-            try {
-                val ppgCsv = CsvBuilder.buildPpgCsv(ppg)
-                val imuCsv = CsvBuilder.buildImuCsv(acc)
+        try {
+            val ppgCsv = CsvBuilder.buildPpgCsv(ppg)
+            val imuCsv = CsvBuilder.buildImuCsv(acc)
 
-                Log.d(
+            Log.d(
+                TAG,
+                "protocol8-1 전송 시작 session=$sessionId " +
+                        "ppgSamples=${ppg.size} accSamples=${acc.size} " +
+                        "ppgBytes=${ppgCsv.size} imuBytes=${imuCsv.size}"
+            )
+
+            val response = Protocol8_1API.requestPost(
+                sessionId = sessionId,
+                ppgCsv = ppgCsv,
+                imuCsv = imuCsv,
+            )
+
+            if (response.success) {
+                Log.d(TAG, "protocol8-1 전송 성공 status=${response.httpCode}")
+            } else {
+                Log.e(
                     TAG,
-                    "protocol8-1 전송 시작 session=$sessionId " +
-                            "ppgSamples=${ppg.size} accSamples=${acc.size} " +
-                            "ppgBytes=${ppgCsv.size} imuBytes=${imuCsv.size}"
+                    "protocol8-1 전송 실패 status=${response.httpCode} body=${response.body}"
                 )
-
-                val response = Protocol8_1API.requestPost(
-                    sessionId = sessionId,
-                    ppgCsv = ppgCsv,
-                    imuCsv = imuCsv,
-                )
-
-                if (response.success) {
-                    Log.d(TAG, "protocol8-1 전송 성공 status=${response.httpCode}")
-                } else {
-                    Log.e(
-                        TAG,
-                        "protocol8-1 전송 실패 status=${response.httpCode} body=${response.body}"
-                    )
-                    callback.onError("protocol8-1 전송 실패 (status=${response.httpCode})")
-                }
-            } catch (t: Throwable) {
-                Log.e(TAG, "protocol8-1 전송 중 예외", t)
-                callback.onError("protocol8-1 전송 중 예외: ${t.message}")
+                callback.onError("protocol8-1 전송 실패 (status=${response.httpCode})")
             }
+        } catch (t: Throwable) {
+            Log.e(TAG, "protocol8-1 전송 중 예외", t)
+            callback.onError("protocol8-1 전송 중 예외: ${t.message}")
         }
     }
 }
