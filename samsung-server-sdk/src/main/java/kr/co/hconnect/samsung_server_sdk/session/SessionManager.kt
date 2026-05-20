@@ -55,6 +55,9 @@ internal class SessionManager(
     /** API 전송용 비동기 스코프. WatchReceiverService 가 죽어도 전송은 완료되도록 SupervisorJob 사용. */
     private val apiScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    /** 세션별 센서 타입별 누적 샘플 수. */
+    private val sampleCounts = mutableMapOf<SensorType, Int>()
+
     fun process(proto: SensorBufferProto) {
         val metadata = if (proto.hasMetadata()) proto.metadata else null
         val state = metadata?.trackingState ?: TrackingState.NONE
@@ -85,11 +88,14 @@ internal class SessionManager(
                     // ③ 파일을 protocol8-1 로 비동기 전송한다
                     val sessionId = currentSessionId
                     if (sessionId != null) {
+                        val chunkTotal = sampleCounts.entries
+                            .joinToString(" | ") { (t, n) -> "$t=$n" }.ifEmpty { "없음" }
                         val chunkDir = dataWriter.closeAll()
+                        sampleCounts.clear()
                         // 다음 청크를 위한 새 DataWriter 세션 시작
                         dataWriter.beginSession(sessionId)
                         if (chunkDir != null) {
-                            Log.d(TAG, "SLEEP 청크 FINISH — protocol8-1 파일 전송 (session=$sessionId dir=$chunkDir)")
+                            Log.d(TAG, "SLEEP 청크 FINISH — protocol8-1 파일 전송 (session=$sessionId dir=${chunkDir.name}) 청크샘플 [$chunkTotal]")
                             apiScope.launch { sendProtocol8_1Files(sessionId, chunkDir) }
                         }
                     }
@@ -157,6 +163,7 @@ internal class SessionManager(
 
         currentSessionId = sessionId
         isRecording = true
+        sampleCounts.clear()
 
         dataWriter.beginSession(sessionId)
         callback.onStoragePath(dataWriter.currentStoragePath)
@@ -171,6 +178,7 @@ internal class SessionManager(
         val sessionId = "on_demand_$timestamp"
         currentSessionId = sessionId
         isRecording = true
+        sampleCounts.clear()
 
         dataWriter.beginSession(sessionId)
         callback.onStoragePath(dataWriter.currentStoragePath)
@@ -190,6 +198,7 @@ internal class SessionManager(
         currentSessionId = sessionId
         currentMeasurementType = type
         isRecording = true
+        sampleCounts.clear()
 
         dataWriter.beginSession(sessionId)
         callback.onStoragePath(dataWriter.currentStoragePath)
@@ -247,7 +256,9 @@ internal class SessionManager(
         val sessionId = currentSessionId ?: return
         val type = currentMeasurementType
 
-        Log.d(TAG, "세션 종료: $sessionId (type=$type)")
+        val total = sampleCounts.entries.joinToString(" | ") { (t, n) -> "$t=$n" }
+            .ifEmpty { "없음" }
+        Log.d(TAG, "세션 종료: $sessionId (type=$type) 누적샘플 [$total]")
         isRecording = false
         currentSessionId = null
 
@@ -294,6 +305,7 @@ internal class SessionManager(
         samples.groupBy { it.sensorType }.forEach { (type: SensorType, list) ->
             dataWriter.appendBatch(type, list)
             callback.onSensorData(sessionId, type, list)
+            sampleCounts[type] = (sampleCounts[type] ?: 0) + list.size
         }
     }
 
