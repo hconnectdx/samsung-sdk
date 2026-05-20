@@ -118,8 +118,8 @@ internal class DataWriter(private val context: Context) {
     private fun getCsvHeader(type: SensorType): String = when (type) {
         SensorType.ACC -> "timestamp,x,y,z"
         SensorType.ECG -> "value"
-        SensorType.PPG_GREEN_25 -> "timestamp,green25,ir25,red25"
-        SensorType.PPG_GREEN_100 -> "timestamp,green100,ir100,red100"
+        SensorType.PPG_GREEN_25 -> "green,ir,red"
+        SensorType.PPG_GREEN_100 -> "green,ir,red"
         else -> "timestamp,data"
     }
 
@@ -136,11 +136,11 @@ internal class DataWriter(private val context: Context) {
         }
         SensorType.PPG_GREEN_25 -> {
             val d = sample.ppgGreen25Data
-            "${d.timestamp},${d.green25},${d.ir25},${d.red25}"
+            "${d.green25},${d.ir25},${d.red25}"
         }
         SensorType.PPG_GREEN_100 -> {
             val d = sample.ppgGreen100Data
-            "${d.timestamp},${d.green100},${d.ir100},${d.red100}"
+            "${d.green100},${d.ir100},${d.red100}"
         }
         else -> null
     }
