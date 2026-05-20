@@ -1,7 +1,6 @@
 package kr.co.hconnect.samsung_server_sdk.session
 
 import android.util.Log
-import kr.co.hconnect.samsung_server_sdk.api.CsvBuilder
 import kr.co.hconnect.samsung_server_sdk.api.HealthOnClient
 import kr.co.hconnect.samsung_server_sdk.api.Protocol2_1API
 import kr.co.hconnect.samsung_server_sdk.api.Protocol8_1API
@@ -18,9 +17,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Calendar
-import java.util.Collections
 import java.util.Date
 import java.util.Locale
 
@@ -29,7 +28,11 @@ private const val TAG = "SessionManager"
 /**
  * 워치에서 수신한 [SensorBufferProto]를 처리하여 세션 상태를 관리하고
  * 파싱된 이벤트를 [ServerSdkCallback]으로 전달하며,
- * [DataWriter]를 통해 센서 데이터를 CSV로 저장한다.
+ * [DataWriter]를 통해 센서 데이터를 CSV 파일로 저장하고 API 로 전송한다.
+ *
+ * ## 파일 기반 전송
+ * 인메모리 ByteArray 대신 DataWriter 가 저장한 CSV 파일을 직접 스트리밍 전송한다.
+ * 대용량 데이터에서 발생하던 GC 일시정지 → Azure Gateway idle timeout(504) 문제를 해소한다.
  */
 internal class SessionManager(
     private val callback: ServerSdkCallback,
@@ -48,18 +51,6 @@ internal class SessionManager(
      * 측정 종료(STOP / FINISH) 시 어떤 protocol(2-1 vs 8-1) 로 전송할지를 결정한다.
      */
     @Volatile private var currentMeasurementType: MeasurementType? = null
-
-    /**
-     * 측정 종료 시 API 전송용으로 누적되는 샘플 버퍼.
-     *  - protocol2-1(ECG/일상): ppgBuffer + ecgBuffer
-     *  - protocol8-1(SLEEP/수면): ppgBuffer + accBuffer(IMU)
-     */
-    private val ppgBuffer: MutableList<SensorSamples> =
-        Collections.synchronizedList(ArrayList<SensorSamples>(8_192))
-    private val ecgBuffer: MutableList<SensorSamples> =
-        Collections.synchronizedList(ArrayList<SensorSamples>(8_192))
-    private val accBuffer: MutableList<SensorSamples> =
-        Collections.synchronizedList(ArrayList<SensorSamples>(8_192))
 
     /** API 전송용 비동기 스코프. WatchReceiverService 가 죽어도 전송은 완료되도록 SupervisorJob 사용. */
     private val apiScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -89,12 +80,18 @@ internal class SessionManager(
             TrackingState.FINISH -> {
                 if (currentMeasurementType == MeasurementType.SLEEP) {
                     // 수면은 1분 단위 청크마다 FINISH 가 발생한다.
-                    // protocol8-1 은 청크마다 전송하되, 세션(isRecording)은 유지한다.
-                    // 실제 수면 종료는 MEASUREMENT_TYPE:STOP 텍스트로만 판정한다.
+                    // ① DataWriter 를 닫아 현재 청크 파일을 완성한다 (동기, bleDispatcher 에서 실행)
+                    // ② 새 청크를 위해 DataWriter 를 다시 시작한다
+                    // ③ 파일을 protocol8-1 로 비동기 전송한다
                     val sessionId = currentSessionId
                     if (sessionId != null) {
-                        Log.d(TAG, "SLEEP 청크 FINISH — protocol8-1 전송 (session=$sessionId)")
-                        apiScope.launch { sendProtocol8_1Result(sessionId) }
+                        val chunkDir = dataWriter.closeAll()
+                        // 다음 청크를 위한 새 DataWriter 세션 시작
+                        dataWriter.beginSession(sessionId)
+                        if (chunkDir != null) {
+                            Log.d(TAG, "SLEEP 청크 FINISH — protocol8-1 파일 전송 (session=$sessionId dir=$chunkDir)")
+                            apiScope.launch { sendProtocol8_1Files(sessionId, chunkDir) }
+                        }
                     }
                 } else {
                     finishSession()
@@ -160,7 +157,6 @@ internal class SessionManager(
 
         currentSessionId = sessionId
         isRecording = true
-        resetMeasurementBuffers()
 
         dataWriter.beginSession(sessionId)
         callback.onStoragePath(dataWriter.currentStoragePath)
@@ -175,9 +171,6 @@ internal class SessionManager(
         val sessionId = "on_demand_$timestamp"
         currentSessionId = sessionId
         isRecording = true
-        // 측정 타입은 워치의 `MEASUREMENT_TYPE:*` 텍스트 알림으로 결정된다.
-        // 텍스트가 protobuf START 보다 늦게 도착하는 경우 onMeasurementType() 에서 갱신된다.
-        resetMeasurementBuffers()
 
         dataWriter.beginSession(sessionId)
         callback.onStoragePath(dataWriter.currentStoragePath)
@@ -197,7 +190,6 @@ internal class SessionManager(
         currentSessionId = sessionId
         currentMeasurementType = type
         isRecording = true
-        resetMeasurementBuffers()
 
         dataWriter.beginSession(sessionId)
         callback.onStoragePath(dataWriter.currentStoragePath)
@@ -258,7 +250,9 @@ internal class SessionManager(
         Log.d(TAG, "세션 종료: $sessionId (type=$type)")
         isRecording = false
         currentSessionId = null
-        dataWriter.closeAll()
+
+        // DataWriter 를 닫아 파일을 완성하고 경로를 받아온다.
+        val sessionDir = dataWriter.closeAll()
         callback.onStoragePath(null)
         callback.onTrackingFinished(sessionId)
 
@@ -267,18 +261,28 @@ internal class SessionManager(
                 apiScope.launch {
                     // ① 수면 종료 즉시 stop 호출 (8시간 경과 or 사용자 종료 시점)
                     notifySleepStop(sessionId)
-                    // ② 수집된 센서 데이터 업로드
-                    sendProtocol8_1Result(sessionId)
+                    // ② 마지막 청크 데이터 업로드 (파일이 있는 경우에만)
+                    if (sessionDir != null) {
+                        sendProtocol8_1Files(sessionId, sessionDir)
+                    }
                 }
             }
-            MeasurementType.ECG -> sendProtocol2_1Result(sessionId)
+            MeasurementType.ECG -> {
+                if (sessionDir != null) {
+                    sendProtocol2_1Files(sessionId, sessionDir)
+                } else {
+                    Log.w(TAG, "sessionDir=null — protocol2-1 전송 생략 (session=$sessionId)")
+                }
+            }
             else -> {
                 // 워치의 MEASUREMENT_TYPE:* 알림을 한 번도 받지 못한 레거시/예외 경로.
                 Log.w(
                     TAG,
                     "currentMeasurementType=null — protocol2-1(일상)로 fallback 합니다. session=$sessionId"
                 )
-                sendProtocol2_1Result(sessionId)
+                if (sessionDir != null) {
+                    sendProtocol2_1Files(sessionId, sessionDir)
+                }
             }
         }
         currentMeasurementType = null
@@ -290,78 +294,46 @@ internal class SessionManager(
         samples.groupBy { it.sensorType }.forEach { (type: SensorType, list) ->
             dataWriter.appendBatch(type, list)
             callback.onSensorData(sessionId, type, list)
-            collectForApi(type, list)
         }
     }
-
-    // ── 측정 결과 누적 ────────────────────────────────────────────────────────
-
-    private fun collectForApi(type: SensorType, samples: List<SensorSamples>) {
-        when (type) {
-            SensorType.PPG_GREEN_25,
-            SensorType.PPG_GREEN_100 -> ppgBuffer.addAll(samples)
-            SensorType.ECG -> ecgBuffer.addAll(samples)
-            SensorType.ACC -> accBuffer.addAll(samples)
-            else -> Unit
-        }
-    }
-
-    private fun resetMeasurementBuffers() {
-        synchronized(ppgBuffer) { ppgBuffer.clear() }
-        synchronized(ecgBuffer) { ecgBuffer.clear() }
-        synchronized(accBuffer) { accBuffer.clear() }
-    }
-
-    private fun snapshotPpg(): List<SensorSamples> = synchronized(ppgBuffer) { ppgBuffer.toList() }
-    private fun snapshotEcg(): List<SensorSamples> = synchronized(ecgBuffer) { ecgBuffer.toList() }
-    private fun snapshotAcc(): List<SensorSamples> = synchronized(accBuffer) { accBuffer.toList() }
 
     // ── protocol2-1 전송 (일상/ECG) ──────────────────────────────────────────
 
     /**
-     * 일상(ECG) 세션 종료 시 누적된 PPG / ECG 데이터를 CSV 로 변환해
-     * `POST /poli/day/protocol2-1` 으로 전송한다.
+     * 일상(ECG) 세션 종료 후 DataWriter 가 닫은 CSV 파일을 직접 스트리밍 전송한다.
+     * `POST /poli/day/protocol2-1`
      */
-    private fun sendProtocol2_1Result(sessionId: String) {
-        val ppg = snapshotPpg()
-        val ecg = snapshotEcg()
+    private fun sendProtocol2_1Files(sessionId: String, sessionDir: File) {
+        val ppgFile = dataWriter.getFile(sessionDir, SensorType.PPG_GREEN_25)
+            ?: dataWriter.getFile(sessionDir, SensorType.PPG_GREEN_100)
+        val ecgFile = dataWriter.getFile(sessionDir, SensorType.ECG)
 
-        // 버퍼는 다음 세션을 위해 비워둔다.
-        resetMeasurementBuffers()
-
-        if (ppg.isEmpty() || ecg.isEmpty()) {
+        if (ppgFile == null || ecgFile == null) {
             Log.w(
                 TAG,
-                "PPG/ECG 데이터 부족 — protocol2-1 전송 생략 " +
-                        "(session=$sessionId, ppg=${ppg.size}, ecg=${ecg.size})"
+                "PPG/ECG 파일 없음 — protocol2-1 전송 생략 " +
+                        "(session=$sessionId ppg=${ppgFile?.name} ecg=${ecgFile?.name})"
             )
             return
         }
 
         apiScope.launch {
             try {
-                val ppgCsv = CsvBuilder.buildPpgCsv(ppg)
-                val ecgCsv = CsvBuilder.buildEcgCsv(ecg)
-
                 Log.d(
                     TAG,
-                    "protocol2-1 전송 시작 session=$sessionId " +
-                            "ppgSamples=${ppg.size} ecgSamples=${ecg.size} " +
-                            "ppgBytes=${ppgCsv.size} ecgBytes=${ecgCsv.size}"
+                    "protocol2-1 파일 전송 시작 session=$sessionId " +
+                            "ppg=${ppgFile.length() / 1024}KB ecg=${ecgFile.length() / 1024}KB"
                 )
 
                 val response = Protocol2_1API.requestPost(
-                    ppgCsv = ppgCsv,
-                    ecgCsv = ecgCsv,
+                    ppgFile = ppgFile,
+                    ecgFile = ecgFile,
                 )
 
                 if (response.success) {
                     Log.d(TAG, "protocol2-1 전송 성공 status=${response.httpCode}")
                 } else {
-                    Log.e(
-                        TAG,
-                        "protocol2-1 전송 실패 status=${response.httpCode} body=${response.body}"
-                    )
+                    Log.e(TAG, "protocol2-1 전송 실패 status=${response.httpCode} body=${response.body}")
                     callback.onError("protocol2-1 전송 실패 (status=${response.httpCode})")
                 }
 
@@ -387,18 +359,12 @@ internal class SessionManager(
     // ── protocol8-1 전송 (수면/SLEEP) ────────────────────────────────────────
 
     /**
-     * 수면(SLEEP) 세션 종료 시 누적된 PPG / IMU(ACC) 데이터를 CSV 로 변환해
-     * `POST /poli/sleep/protocol8-1` 으로 전송한다.
+     * 수면(SLEEP) 청크 또는 최종 데이터를 CSV 파일로 직접 스트리밍 전송한다.
+     * `POST /poli/sleep/protocol8-1`
      *
      * sessionId 는 protocol8-1 스펙(`yyyyMMdd_HHmmss`, 15자) 을 따른다.
      */
-    /** finishSession() 의 apiScope.launch 안에서 호출된다 (suspend 불필요, 블로킹 OK). */
-    private fun sendProtocol8_1Result(sessionId: String) {
-        val ppg = snapshotPpg()
-        val acc = snapshotAcc()
-
-        resetMeasurementBuffers()
-
+    private fun sendProtocol8_1Files(sessionId: String, chunkDir: File) {
         if (sessionId.length != 15) {
             Log.e(
                 TAG,
@@ -408,39 +374,36 @@ internal class SessionManager(
             return
         }
 
-        if (ppg.isEmpty() || acc.isEmpty()) {
+        val ppgFile = dataWriter.getFile(chunkDir, SensorType.PPG_GREEN_25)
+            ?: dataWriter.getFile(chunkDir, SensorType.PPG_GREEN_100)
+        val imuFile = dataWriter.getFile(chunkDir, SensorType.ACC)
+
+        if (ppgFile == null || imuFile == null) {
             Log.w(
                 TAG,
-                "PPG/IMU 데이터 부족 — protocol8-1 전송 생략 " +
-                        "(session=$sessionId, ppg=${ppg.size}, acc=${acc.size})"
+                "PPG/IMU 파일 없음 — protocol8-1 전송 생략 " +
+                        "(session=$sessionId ppg=${ppgFile?.name} imu=${imuFile?.name})"
             )
             return
         }
 
         try {
-            val ppgCsv = CsvBuilder.buildPpgCsv(ppg)
-            val imuCsv = CsvBuilder.buildImuCsv(acc)
-
             Log.d(
                 TAG,
-                "protocol8-1 전송 시작 session=$sessionId " +
-                        "ppgSamples=${ppg.size} accSamples=${acc.size} " +
-                        "ppgBytes=${ppgCsv.size} imuBytes=${imuCsv.size}"
+                "protocol8-1 파일 전송 시작 session=$sessionId dir=${chunkDir.name} " +
+                        "ppg=${ppgFile.length() / 1024}KB imu=${imuFile.length() / 1024}KB"
             )
 
             val response = Protocol8_1API.requestPost(
                 sessionId = sessionId,
-                ppgCsv = ppgCsv,
-                imuCsv = imuCsv,
+                ppgFile = ppgFile,
+                imuFile = imuFile,
             )
 
             if (response.success) {
                 Log.d(TAG, "protocol8-1 전송 성공 status=${response.httpCode}")
             } else {
-                Log.e(
-                    TAG,
-                    "protocol8-1 전송 실패 status=${response.httpCode} body=${response.body}"
-                )
+                Log.e(TAG, "protocol8-1 전송 실패 status=${response.httpCode} body=${response.body}")
                 callback.onError("protocol8-1 전송 실패 (status=${response.httpCode})")
             }
 

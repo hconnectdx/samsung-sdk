@@ -84,8 +84,10 @@ internal class DataWriter(private val context: Context) {
 
     /**
      * 현재 세션의 모든 CSV writer를 닫는다.
+     *
+     * @return 방금 닫힌 세션 디렉터리. 파일을 그대로 전송할 때 사용한다.
      */
-    fun closeAll() {
+    fun closeAll(): File? {
         writers.values.forEach { writer ->
             try {
                 writer.flush()
@@ -95,8 +97,18 @@ internal class DataWriter(private val context: Context) {
             }
         }
         writers.clear()
+        val closedDir = sessionDir
         sessionDir = null
-        Log.d(TAG, "모든 writer 종료")
+        Log.d(TAG, "모든 writer 종료 dir=${closedDir?.absolutePath}")
+        return closedDir
+    }
+
+    /**
+     * 세션 디렉터리에서 특정 센서 타입의 CSV 파일을 반환한다.
+     */
+    fun getFile(dir: File, type: SensorType): File? {
+        val file = File(dir, "${type.name}.csv")
+        return if (file.exists() && file.length() > 0) file else null
     }
 
     // ── CSV Writer 생성 ──────────────────────────────────────────────────────

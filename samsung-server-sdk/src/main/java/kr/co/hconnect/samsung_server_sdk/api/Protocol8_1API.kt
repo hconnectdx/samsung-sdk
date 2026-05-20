@@ -4,7 +4,8 @@ import android.util.Log
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.RequestBody.Companion.asRequestBody
+import java.io.File
 
 /**
  * POST {baseUrl}/poli/sleep/protocol8-1
@@ -16,7 +17,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
  *  - ppgFile   (CSV: GREEN, IR, RED)
  *  - imuFile   (CSV: x, y, z)
  *
- * 수면(SLEEP) 측정 종료 시점에 누적된 PPG / IMU(ACC) 데이터를 전송한다.
+ * 파일을 스트리밍으로 전송하여 대용량 데이터 전송 시 메모리 부담과 GC 일시정지를 줄인다.
  */
 object Protocol8_1API {
 
@@ -37,20 +38,16 @@ object Protocol8_1API {
      * @param reqDate     수집일시 (yyyyMMddHHmmss) — null 이면 현재 시간으로 자동 채움
      * @param userSno     사용자 번호 — null 이면 HealthOnClient.userSno 사용
      * @param sessionId   세션 ID (yyyyMMdd_HHmmss, 15자)
-     * @param ppgCsv      PPG CSV 바이트 (GREEN, IR, RED)
-     * @param imuCsv      IMU CSV 바이트 (x, y, z)
-     * @param ppgFileName 첨부 파일명 (기본 "ppg.csv")
-     * @param imuFileName 첨부 파일명 (기본 "imu.csv")
+     * @param ppgFile     PPG CSV 파일 (GREEN, IR, RED)
+     * @param imuFile     IMU CSV 파일 (x, y, z)
      */
     @Throws(Exception::class)
     fun requestPost(
         reqDate: String? = null,
         userSno: Int? = null,
         sessionId: String,
-        ppgCsv: ByteArray,
-        imuCsv: ByteArray,
-        ppgFileName: String = "ppg.csv",
-        imuFileName: String = "imu.csv",
+        ppgFile: File,
+        imuFile: File,
     ): Response {
         HealthOnClient.checkInitialized()
 
@@ -63,24 +60,16 @@ object Protocol8_1API {
         require(sessionId.length == 15) {
             "sessionId 는 15자리(yyyyMMdd_HHmmss) 여야 합니다. value=$sessionId"
         }
-        require(ppgCsv.isNotEmpty()) { "ppgCsv 가 비어 있습니다." }
-        require(imuCsv.isNotEmpty()) { "imuCsv 가 비어 있습니다." }
+        require(ppgFile.exists() && ppgFile.length() > 0) { "ppgFile 이 없거나 비어 있습니다: ${ppgFile.path}" }
+        require(imuFile.exists() && imuFile.length() > 0) { "imuFile 이 없거나 비어 있습니다: ${imuFile.path}" }
 
         val body = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
             .addFormDataPart("reqDate", finalReqDate)
             .addFormDataPart("userSno", finalUserSno.toString())
             .addFormDataPart("sessionId", sessionId)
-            .addFormDataPart(
-                "ppgFile",
-                ppgFileName,
-                ppgCsv.toRequestBody(CSV_MEDIA_TYPE)
-            )
-            .addFormDataPart(
-                "imuFile",
-                imuFileName,
-                imuCsv.toRequestBody(CSV_MEDIA_TYPE)
-            )
+            .addFormDataPart("ppgFile", ppgFile.name, ppgFile.asRequestBody(CSV_MEDIA_TYPE))
+            .addFormDataPart("imuFile", imuFile.name, imuFile.asRequestBody(CSV_MEDIA_TYPE))
             .build()
 
         val request = Request.Builder()
@@ -91,7 +80,6 @@ object Protocol8_1API {
             .post(body)
             .build()
 
-        val totalBytes = ppgCsv.size + imuCsv.size
         Log.d(
             TAG,
             """
@@ -99,9 +87,8 @@ object Protocol8_1API {
               reqDate    = $finalReqDate
               userSno    = $finalUserSno
               sessionId  = $sessionId
-              ppgFile    = ${ppgCsv.size} bytes (${ppgCsv.size / 1024} KB)
-              imuFile    = ${imuCsv.size} bytes (${imuCsv.size / 1024} KB)
-              totalBody  ≈ $totalBytes bytes (${totalBytes / 1024} KB)
+              ppgFile    = ${ppgFile.length()} bytes (${ppgFile.length() / 1024} KB)
+              imuFile    = ${imuFile.length()} bytes (${imuFile.length() / 1024} KB)
             """.trimIndent()
         )
 

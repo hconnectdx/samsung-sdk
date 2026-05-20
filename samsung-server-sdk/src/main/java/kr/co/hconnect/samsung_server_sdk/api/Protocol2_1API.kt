@@ -4,7 +4,8 @@ import android.util.Log
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.RequestBody.Companion.asRequestBody
+import java.io.File
 
 /**
  * POST {baseUrl}/poli/day/protocol2-1
@@ -14,10 +15,9 @@ import okhttp3.RequestBody.Companion.toRequestBody
  *  - userSno
  *  - userAge
  *  - ppgFile  (CSV: GREEN, IR, RED)
- *  - ecgFile  (CSV: value, lead_off, max_threshold_mv, min_threshold_mv, seq)
+ *  - ecgFile  (CSV: value)
  *
- * polihealth-sdk-android-v2 의 DailyProtocol02API.requestPost 와 동일한 패턴.
- * (Ktor 대신 OkHttp 멀티파트 사용)
+ * 파일을 스트리밍으로 전송하여 대용량 데이터 전송 시 메모리 부담과 GC 일시정지를 줄인다.
  */
 object Protocol2_1API {
 
@@ -38,20 +38,16 @@ object Protocol2_1API {
      * @param reqDate    수집일시 (yyyyMMddHHmmss) — null 이면 현재 시간으로 자동 채움
      * @param userSno    사용자 번호 — null 이면 HealthOnClient.userSno 사용
      * @param userAge    사용자 나이 — null 이면 HealthOnClient.userAge 사용
-     * @param ppgCsv     PPG CSV 바이트 (GREEN, IR, RED)
-     * @param ecgCsv     ECG CSV 바이트 (value, lead_off, max_threshold_mv, min_threshold_mv, seq)
-     * @param ppgFileName 첨부 파일명 (기본 "ppg.csv")
-     * @param ecgFileName 첨부 파일명 (기본 "ecg.csv")
+     * @param ppgFile    PPG CSV 파일 (GREEN, IR, RED)
+     * @param ecgFile    ECG CSV 파일 (value)
      */
     @Throws(Exception::class)
     fun requestPost(
         reqDate: String? = null,
         userSno: Int? = null,
         userAge: Int? = null,
-        ppgCsv: ByteArray,
-        ecgCsv: ByteArray,
-        ppgFileName: String = "ppg.csv",
-        ecgFileName: String = "ecg.csv",
+        ppgFile: File,
+        ecgFile: File,
     ): Response {
         HealthOnClient.checkInitialized()
 
@@ -62,24 +58,16 @@ object Protocol2_1API {
         require(finalReqDate.length == 14) {
             "reqDate 는 14자리(yyyyMMddHHmmss) 여야 합니다. value=$finalReqDate"
         }
-        require(ppgCsv.isNotEmpty()) { "ppgCsv 가 비어 있습니다." }
-        require(ecgCsv.isNotEmpty()) { "ecgCsv 가 비어 있습니다." }
+        require(ppgFile.exists() && ppgFile.length() > 0) { "ppgFile 이 없거나 비어 있습니다: ${ppgFile.path}" }
+        require(ecgFile.exists() && ecgFile.length() > 0) { "ecgFile 이 없거나 비어 있습니다: ${ecgFile.path}" }
 
         val body = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
             .addFormDataPart("reqDate", finalReqDate)
             .addFormDataPart("userSno", finalUserSno.toString())
             .addFormDataPart("userAge", finalUserAge.toString())
-            .addFormDataPart(
-                "ppgFile",
-                ppgFileName,
-                ppgCsv.toRequestBody(CSV_MEDIA_TYPE)
-            )
-            .addFormDataPart(
-                "ecgFile",
-                ecgFileName,
-                ecgCsv.toRequestBody(CSV_MEDIA_TYPE)
-            )
+            .addFormDataPart("ppgFile", ppgFile.name, ppgFile.asRequestBody(CSV_MEDIA_TYPE))
+            .addFormDataPart("ecgFile", ecgFile.name, ecgFile.asRequestBody(CSV_MEDIA_TYPE))
             .build()
 
         val request = Request.Builder()
@@ -90,7 +78,6 @@ object Protocol2_1API {
             .post(body)
             .build()
 
-        val totalBytes = ppgCsv.size + ecgCsv.size
         Log.d(
             TAG,
             """
@@ -98,9 +85,8 @@ object Protocol2_1API {
               reqDate    = $finalReqDate
               userSno    = $finalUserSno
               userAge    = $finalUserAge
-              ppgFile    = ${ppgCsv.size} bytes (${ppgCsv.size / 1024} KB)
-              ecgFile    = ${ecgCsv.size} bytes (${ecgCsv.size / 1024} KB)
-              totalBody  ≈ $totalBytes bytes (${totalBytes / 1024} KB)
+              ppgFile    = ${ppgFile.length()} bytes (${ppgFile.length() / 1024} KB)
+              ecgFile    = ${ecgFile.length()} bytes (${ecgFile.length() / 1024} KB)
             """.trimIndent()
         )
 
@@ -110,7 +96,6 @@ object Protocol2_1API {
             val elapsedMs = System.currentTimeMillis() - startMs
             val resBody = response.body?.string().orEmpty()
 
-            val level = if (response.isSuccessful) "D" else "E"
             val logMsg = """
             ◀ [Response] ${response.code} ${response.message} (${elapsedMs}ms)
               url        = ${response.request.url}

@@ -51,19 +51,32 @@ object SamsungServerSdk {
      * HealthOn 서버 정보([baseUrl], [clientId], [clientSecret])를 함께 등록하며,
      * [start] 호출 전에 반드시 한 번 호출해야 한다.
      *
-     * @param baseUrl      HealthOn API 서버 주소 (ex. "https://mapi-stg.health-on.co.kr/")
-     * @param clientId     서버에서 발급한 ClientId 헤더 값
-     * @param clientSecret 서버에서 발급한 ClientSecret 헤더 값
-     * @param callback     워치 연결 / 측정 / 오류 이벤트를 수신할 콜백
+     * @param baseUrl          HealthOn API 서버 주소 (ex. "https://mapi-stg.health-on.co.kr/")
+     * @param clientId         서버에서 발급한 ClientId 헤더 값
+     * @param clientSecret     서버에서 발급한 ClientSecret 헤더 값
+     * @param callback         워치 연결 / 측정 / 오류 이벤트를 수신할 콜백
+     * @param connectTimeoutMs 연결 타임아웃(ms). 기본 15초
+     * @param readTimeoutMs    응답 대기 타임아웃(ms). CSV 업로드 후 서버 처리 시간을 고려해 기본 120초
+     * @param writeTimeoutMs   요청 전송 타임아웃(ms). 대용량 멀티파트 업로드를 고려해 기본 120초
      */
     fun init(
         baseUrl: String,
         clientId: String,
         clientSecret: String,
         callback: ServerSdkCallback,
+        connectTimeoutMs: Long = 15_000L,
+        readTimeoutMs: Long = 120_000L,
+        writeTimeoutMs: Long = 120_000L,
     ) {
         this.callback = callback
-        HealthOnClient.init(baseUrl, clientId, clientSecret)
+        HealthOnClient.init(
+            baseUrl          = baseUrl,
+            clientId         = clientId,
+            clientSecret     = clientSecret,
+            connectTimeoutMs = connectTimeoutMs,
+            readTimeoutMs    = readTimeoutMs,
+            writeTimeoutMs   = writeTimeoutMs,
+        )
     }
 
     /**
