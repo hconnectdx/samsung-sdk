@@ -96,7 +96,9 @@ class WatchReceiverService : Service() {
         super.onDestroy()
         Log.d(TAG, "onDestroy")
 
-        if (sessionManager.isRecording) sessionManager.finishSession()
+        if (::sessionManager.isInitialized && sessionManager.isRecording) {
+            sessionManager.finishSession()
+        }
 
         connectedDeviceAddress?.let { HCBle.disconnect(it) }
         connectedDeviceAddress = null

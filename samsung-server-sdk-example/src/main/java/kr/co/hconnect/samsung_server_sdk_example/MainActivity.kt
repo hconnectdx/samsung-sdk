@@ -1,9 +1,13 @@
 package kr.co.hconnect.samsung_server_sdk_example
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -42,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import kr.co.hconnect.samsung_server_sdk.SamsungServerSdk
+import kr.co.hconnect.samsung_server_sdk.ble.MeasurementType
 import kr.co.hconnect.samsung_server_sdk.callback.ServerSdkCallback
 import kr.co.hconnect.samsung_server_sdk.proto.SensorSamples
 import kr.co.hconnect.samsung_server_sdk.proto.SensorType
@@ -74,6 +79,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         requestPermissions()
+        requestAllFilesAccessIfNeeded()
 
         setContent {
             SamsungSDKTheme {
@@ -123,6 +129,13 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            override fun onMeasurementStarted(sessionId: String, type: MeasurementType) {
+                runOnUiThread {
+                    sessionState.value = "기록 중: $sessionId ($type)"
+                    appendLog("[측정 타입] $type session=$sessionId")
+                }
+            }
+
             override fun onTrackingFinished(sessionId: String) {
                 runOnUiThread {
                     sessionState.value = "세션 없음"
@@ -155,6 +168,30 @@ class MainActivity : ComponentActivity() {
             override fun onSleepFinished(sessionId: String, sleepQuality: Int?) {
                 runOnUiThread {
                     appendLog("[수면 완료] sessionId=$sessionId sleepQuality=$sleepQuality")
+                }
+            }
+
+            override fun onProtocol2_1Result(
+                sessionId: String,
+                success: Boolean,
+                httpCode: Int,
+                body: String,
+            ) {
+                runOnUiThread {
+                    val tag = if (success) "성공" else "실패"
+                    appendLog("[protocol2-1 $tag] session=$sessionId status=$httpCode body=$body")
+                }
+            }
+
+            override fun onProtocol8_1Result(
+                sessionId: String,
+                success: Boolean,
+                httpCode: Int,
+                body: String,
+            ) {
+                runOnUiThread {
+                    val tag = if (success) "성공" else "실패"
+                    appendLog("[protocol8-1 $tag] session=$sessionId status=$httpCode body=$body")
                 }
             }
 
@@ -244,6 +281,25 @@ class MainActivity : ComponentActivity() {
 
         if (notGranted.isNotEmpty()) {
             permissionLauncher.launch(notGranted.toTypedArray())
+        }
+    }
+
+    /**
+     * Android 11+ : `Download/` 등 공용 폴더에 CSV 를 쓰려면 "모든 파일 액세스"(MANAGE_EXTERNAL_STORAGE) 권한이 필요하다.
+     * 일반 런타임 권한과 달리 시스템 설정 화면을 열어 사용자가 직접 토글해야 한다.
+     */
+    private fun requestAllFilesAccessIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        if (Environment.isExternalStorageManager()) return
+
+        appendLog("모든 파일 액세스 권한이 필요합니다. 설정 화면에서 허용해 주세요.")
+        runCatching {
+            val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                data = Uri.parse("package:$packageName")
+            }
+            startActivity(intent)
+        }.onFailure {
+            startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
         }
     }
 }

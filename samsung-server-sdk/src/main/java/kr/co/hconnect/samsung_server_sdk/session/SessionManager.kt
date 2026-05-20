@@ -131,6 +131,7 @@ internal class SessionManager(
                                     "(session=$currentSessionId)"
                         )
                         currentMeasurementType = type
+                        currentSessionId?.let { callback.onMeasurementStarted(it, type) }
                     }
                     return
                 }
@@ -203,6 +204,7 @@ internal class SessionManager(
 
         Log.d(TAG, "측정 세션 시작: type=$type sessionId=$sessionId")
         callback.onTrackingStarted(sessionId)
+        callback.onMeasurementStarted(sessionId, type)
 
         if (type == MeasurementType.SLEEP) {
             apiScope.launch { notifySleepStart() }
@@ -362,9 +364,22 @@ internal class SessionManager(
                     )
                     callback.onError("protocol2-1 전송 실패 (status=${response.httpCode})")
                 }
+
+                callback.onProtocol2_1Result(
+                    sessionId = sessionId,
+                    success = response.success,
+                    httpCode = response.httpCode,
+                    body = response.body,
+                )
             } catch (t: Throwable) {
                 Log.e(TAG, "protocol2-1 전송 중 예외", t)
                 callback.onError("protocol2-1 전송 중 예외: ${t.message}")
+                callback.onProtocol2_1Result(
+                    sessionId = sessionId,
+                    success = false,
+                    httpCode = -1,
+                    body = t.message.orEmpty(),
+                )
             }
         }
     }
@@ -428,9 +443,22 @@ internal class SessionManager(
                 )
                 callback.onError("protocol8-1 전송 실패 (status=${response.httpCode})")
             }
+
+            callback.onProtocol8_1Result(
+                sessionId = sessionId,
+                success = response.success,
+                httpCode = response.httpCode,
+                body = response.body,
+            )
         } catch (t: Throwable) {
             Log.e(TAG, "protocol8-1 전송 중 예외", t)
             callback.onError("protocol8-1 전송 중 예외: ${t.message}")
+            callback.onProtocol8_1Result(
+                sessionId = sessionId,
+                success = false,
+                httpCode = -1,
+                body = t.message.orEmpty(),
+            )
         }
     }
 }

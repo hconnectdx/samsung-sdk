@@ -20,7 +20,7 @@ private const val ROOT_DIR = "SamsungServerSdk"
  *
  * ## 폴더 구조
  * ```
- * Documents/SamsungServerSdk/
+ * Download/SamsungServerSdk/
  *   └── 2026-04-29/
  *       └── 15_30_00/
  *           ├── ACC.csv
@@ -28,6 +28,10 @@ private const val ROOT_DIR = "SamsungServerSdk"
  *           ├── PPG_GREEN_25.csv
  *           └── PPG_GREEN_100.csv
  * ```
+ *
+ * Android 11+ 에서 공용 `Download/` 폴더에 쓰려면 `MANAGE_EXTERNAL_STORAGE`
+ * 권한이 필요하다 (예제 앱에서 설정 화면을 통해 사용자에게 요청).
+ * 권한이 없으면 자동으로 앱 전용 외부 저장소로 fallback 한다.
  */
 internal class DataWriter(private val context: Context) {
 
@@ -100,14 +104,11 @@ internal class DataWriter(private val context: Context) {
     private fun createWriter(dir: File, type: SensorType): BufferedWriter {
         val fileName = "${type.name}.csv"
         val file = File(dir, fileName)
-        val isNew = !file.exists()
 
-        val writer = BufferedWriter(FileWriter(file, true))
-        if (isNew) {
-            writer.write(getCsvHeader(type))
-            writer.newLine()
-            writer.flush()
-        }
+        val writer = BufferedWriter(FileWriter(file, false))
+        writer.write(getCsvHeader(type))
+        writer.newLine()
+        writer.flush()
         Log.d(TAG, "CSV 생성: ${file.absolutePath}")
         return writer
     }
@@ -116,7 +117,7 @@ internal class DataWriter(private val context: Context) {
 
     private fun getCsvHeader(type: SensorType): String = when (type) {
         SensorType.ACC -> "timestamp,x,y,z"
-        SensorType.ECG -> "timestamp,value,lead_off,max_threshold_mv,min_threshold_mv,seq"
+        SensorType.ECG -> "value"
         SensorType.PPG_GREEN_25 -> "timestamp,green25,ir25,red25"
         SensorType.PPG_GREEN_100 -> "timestamp,green100,ir100,red100"
         else -> "timestamp,data"
@@ -131,7 +132,7 @@ internal class DataWriter(private val context: Context) {
         }
         SensorType.ECG -> {
             val d = sample.ecgData
-            "${d.timestamp},${d.value},${d.leadOff},${d.maxThresholdMv},${d.minThresholdMv},${d.seq}"
+            "${d.value}"
         }
         SensorType.PPG_GREEN_25 -> {
             val d = sample.ppgGreen25Data
@@ -147,19 +148,38 @@ internal class DataWriter(private val context: Context) {
     // ── 저장 경로 결정 ───────────────────────────────────────────────────────
 
     private fun resolveBaseDir(): File {
-        // 1순위: Documents/SamsungServerSdk
-        val documentsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
-        val primary = File(documentsDir, ROOT_DIR)
-        if (documentsDir.canWrite() || primary.mkdirs()) return primary
-
-        // 2순위: 앱 외부 저장소
-        val externalDir = context.getExternalFilesDir(null)
-        if (externalDir != null) {
-            val secondary = File(externalDir, ROOT_DIR)
-            if (secondary.mkdirs() || secondary.exists()) return secondary
+        // 1순위: 공용 Download/SamsungServerSdk (사용자가 파일관리자로 접근 가능)
+        //   - Android 11+ : MANAGE_EXTERNAL_STORAGE 권한 필요
+        //   - Android 10- : WRITE_EXTERNAL_STORAGE 권한 필요
+        if (hasAllFilesAccess()) {
+            val downloadDir = Environment.getExternalStoragePublicDirectory(
+                Environment.DIRECTORY_DOWNLOADS
+            )
+            val dir = File(downloadDir, ROOT_DIR)
+            if (dir.exists() || dir.mkdirs()) return dir
+            Log.w(TAG, "Download 폴더 생성 실패 → 앱 전용 저장소로 fallback")
+        } else {
+            Log.w(TAG, "MANAGE_EXTERNAL_STORAGE 권한 없음 → 앱 전용 저장소로 fallback")
         }
 
-        // 3순위: 앱 내부 저장소
+        // 2순위: 앱 전용 외부 저장소 — 권한 불필요
+        //   경로: /storage/emulated/0/Android/data/{packageName}/files/SamsungServerSdk
+        val externalDir = context.getExternalFilesDir(null)
+        if (externalDir != null) {
+            val dir = File(externalDir, ROOT_DIR)
+            if (dir.exists() || dir.mkdirs()) return dir
+        }
+
+        // 3순위: 앱 내부 저장소 (외부 저장소 마운트 안된 경우)
         return File(context.filesDir, ROOT_DIR).also { it.mkdirs() }
+    }
+
+    private fun hasAllFilesAccess(): Boolean {
+        return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            Environment.isExternalStorageManager()
+        } else {
+            // Android 10 이하 - WRITE_EXTERNAL_STORAGE 권한 체크는 호출 측에서 보장
+            true
+        }
     }
 }

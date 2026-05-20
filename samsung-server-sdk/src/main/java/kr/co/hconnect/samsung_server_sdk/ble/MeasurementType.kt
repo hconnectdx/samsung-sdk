@@ -11,13 +11,13 @@ package kr.co.hconnect.samsung_server_sdk.ble
  * 일반 센서 데이터(`SensorBufferProto`) 는 [4B big-endian length][protobuf bytes]
  * 형태의 바이너리이므로, 위 형식의 UTF-8 텍스트인지 여부로 메시지를 구분한다.
  */
-internal enum class MeasurementType(val rawValue: String) {
+enum class MeasurementType(val rawValue: String) {
     ECG("ECG"),
     SLEEP("SLEEP"),
     STOP("STOP");
 
     companion object {
-        const val MESSAGE_PREFIX = "MEASUREMENT_TYPE:"
+        internal const val MESSAGE_PREFIX = "MEASUREMENT_TYPE:"
 
         /**
          * 들어온 바이트가 `MEASUREMENT_TYPE:<VALUE>` 형식이면 해당 enum 으로,
@@ -25,7 +25,7 @@ internal enum class MeasurementType(val rawValue: String) {
          *
          * 너무 짧거나 ASCII 가 아닌 패킷, prefix 가 다른 패킷은 모두 `null`.
          */
-        fun parseOrNull(bytes: ByteArray): MeasurementType? {
+        internal fun parseOrNull(bytes: ByteArray): MeasurementType? {
             if (bytes.size < MESSAGE_PREFIX.length || bytes.size > 64) return null
 
             // prefix 만 먼저 확인 (전체 디코딩 비용 줄이기 위해)

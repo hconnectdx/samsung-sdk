@@ -7,7 +7,7 @@ import kr.co.hconnect.samsung_server_sdk.proto.SensorSamples
  *
  * 서버 스펙:
  *  - ppgFile: PPG CSV (GREEN, IR, RED)
- *  - ecgFile: ECG CSV (value, lead_off, max_threshold_mv, min_threshold_mv, seq)
+ *  - ecgFile: ECG CSV (value)
  *
  * 입력 샘플은 SensorBufferProto 의 `SensorSamples` 리스트로,
  * - PPG_GREEN_25 / PPG_GREEN_100 두 가지 모두 PPG 로 합쳐서 처리한다.
@@ -39,17 +39,11 @@ internal object CsvBuilder {
     }
 
     fun buildEcgCsv(samples: List<SensorSamples>): ByteArray {
-        val sb = StringBuilder(80 + samples.size * 48)
-        sb.append("value,lead_off,max_threshold_mv,min_threshold_mv,seq").append(EOL)
+        val sb = StringBuilder(16 + samples.size * 12)
+        sb.append("value").append(EOL)
         for (s in samples) {
             if (!s.hasEcgData()) continue
-            with(s.ecgData) {
-                sb.append(value).append(',')
-                    .append(leadOff).append(',')
-                    .append(maxThresholdMv).append(',')
-                    .append(minThresholdMv).append(',')
-                    .append(seq).append(EOL)
-            }
+            sb.append(s.ecgData.value).append(EOL)
         }
         return sb.toString().toByteArray(Charsets.UTF_8)
     }
