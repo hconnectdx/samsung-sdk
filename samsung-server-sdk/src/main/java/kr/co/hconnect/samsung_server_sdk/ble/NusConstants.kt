@@ -26,4 +26,7 @@ internal object NusConstants {
 
     /** 폰 서비스가 중지됨을 워치에 알리는 명령 문자열 */
     const val CMD_SERVICE_STOPPED = "MOBILE_BLE_SERVICE_STATUS:STOPPED"
+
+    /** 워치에 수면측정 종료를 요청하는 명령 문자열 */
+    const val CMD_MEASUREMENT_CONTROL_STOP_SLEEP = "MEASUREMENT_CONTROL:STOP_SLEEP"
 }

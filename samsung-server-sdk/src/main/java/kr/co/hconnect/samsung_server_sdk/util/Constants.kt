@@ -8,6 +8,9 @@ internal object Constants {
     /** WatchReceiverService 정지 Action */
     const val ACTION_STOP_SERVICE = "kr.co.hconnect.samsung_server_sdk.ACTION_STOP_SERVICE"
 
+    /** 워치에 수면측정 종료 명령 전송 Action */
+    const val ACTION_STOP_SLEEP_MEASUREMENT = "kr.co.hconnect.samsung_server_sdk.ACTION_STOP_SLEEP_MEASUREMENT"
+
     /** 포그라운드 알림 채널 ID */
     const val NOTIFICATION_CHANNEL_ID = "samsung_server_sdk_channel"
 

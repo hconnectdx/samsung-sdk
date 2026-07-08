@@ -74,7 +74,7 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.okhttp.logging.interceptor)
 
-    implementation("kr.co.hconnect:bluetooth-sdk-android-v2:1.0.9")
+    implementation("kr.co.hconnect:bluetooth-sdk-android-v2:1.0.10")
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

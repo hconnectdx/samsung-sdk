@@ -77,6 +77,11 @@ class WatchReceiverService : Service() {
             return START_NOT_STICKY
         }
 
+        if (intent?.action == Constants.ACTION_STOP_SLEEP_MEASUREMENT) {
+            writeToWatch(NusConstants.CMD_MEASUREMENT_CONTROL_STOP_SLEEP)
+            return START_STICKY
+        }
+
         startForeground()
 
         val watch = WatchFinder.find(this)
@@ -131,9 +136,13 @@ class WatchReceiverService : Service() {
                     BLEState.STATE_CONNECTED -> {
                         connectedDeviceAddress = address
                         Log.d(TAG, "워치 연결됨: $address")
-                        HCBle.getGattController(address)?.bluetoothGatt
-                            ?.requestMtu(512)
-                            .also { Log.d(TAG, "MTU 협상 요청 (512)") }
+                        // 기존에는 bluetoothGatt.requestMtu(512)를 직접 호출해서 결과 콜백을 아예
+                        // 안 받고 있었다 — onMtuChanged가 실제로 왔는지 확인할 방법이 없었다.
+                        // GATTController의 requestMtu 래퍼로 바꿔서 결과를 명시적으로 로깅한다.
+                        val queued = HCBle.getGattController(address)?.requestMtu(512) { mtu, success ->
+                            Log.d(TAG, "MTU 협상 결과 콜백 수신: mtu=$mtu, success=$success")
+                        }
+                        Log.d(TAG, "MTU 협상 요청 (512) — 큐잉됨=$queued")
                         SamsungServerSdk.getCallback()?.onConnected(device.name ?: address)
                     }
 

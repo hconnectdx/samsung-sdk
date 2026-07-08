@@ -111,6 +111,17 @@ object SamsungServerSdk {
     /** SDK가 실행 중인지 여부. */
     fun isRunning(): Boolean = running
 
+    /**
+     * 워치에 수면측정 종료 명령(`MEASUREMENT_CONTROL:STOP_SLEEP`)을 전송한다.
+     *
+     * [start]로 연결된 [WatchReceiverService]가 실행 중이어야 하며, 서비스는 종료되지 않고 계속 실행된다.
+     */
+    fun stopSleepMeasurement(context: Context) {
+        val intent = Intent(context, WatchReceiverService::class.java)
+            .setAction(Constants.ACTION_STOP_SLEEP_MEASUREMENT)
+        context.startService(intent)
+    }
+
     /** 내부용: 서비스에서 콜백을 참조하기 위해 사용. */
     internal fun getCallback(): ServerSdkCallback? = callback
 
