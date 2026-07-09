@@ -4,9 +4,11 @@ import android.annotation.SuppressLint
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.bluetooth.BluetoothGatt
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
 import android.util.Log
 import androidx.annotation.RequiresApi
 import androidx.core.app.NotificationCompat
@@ -20,12 +22,30 @@ import kr.co.hconnect.samsung_server_sdk.util.Constants
 import kr.co.hconnect.samsung_server_sdk.write.DataWriter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kr.co.hconnect.bluetooth_sdk_android.gatt.BLEState
+import java.util.concurrent.atomic.AtomicBoolean
 
 private const val TAG = "WatchReceiverService"
+
+/** 요청 MTU. 협상 성공 시 청크당 페이로드 = MTU - 3 바이트. */
+private const val DESIRED_MTU = 512
+
+/** MTU 협상 응답(onMtuChanged) 대기 시간. 초과 시 재요청한다. */
+private const val MTU_TIMEOUT_MS = 3_000L
+
+/** MTU 협상 최대 시도 횟수. */
+private const val MTU_MAX_ATTEMPTS = 3
+
+/** 데이터 유휴 판정 시간. 이 시간 동안 수신이 없으면 connection priority를 BALANCED로 복귀한다. */
+private const val PRIORITY_IDLE_TIMEOUT_MS = 15_000L
+
+/** 유휴 감시 주기. */
+private const val PRIORITY_IDLE_CHECK_MS = 5_000L
 
 @SuppressLint("MissingPermission")
 class WatchReceiverService : Service() {
@@ -39,6 +59,16 @@ class WatchReceiverService : Service() {
     private val bleDispatcher = Dispatchers.IO.limitedParallelism(1)
 
     private var connectedDeviceAddress: String? = null
+
+    /** 현재 connection priority가 HIGH로 요청된 상태인지. */
+    @Volatile
+    private var connectionPriorityHigh = false
+
+    /** 마지막 BLE 데이터 수신 시각 (elapsedRealtime 기준). */
+    @Volatile
+    private var lastDataAtMs = 0L
+
+    private var priorityIdleWatchdog: Job? = null
 
     private lateinit var sessionManager: SessionManager
     private lateinit var dataWriter: DataWriter
@@ -136,13 +166,10 @@ class WatchReceiverService : Service() {
                     BLEState.STATE_CONNECTED -> {
                         connectedDeviceAddress = address
                         Log.d(TAG, "워치 연결됨: $address")
-                        // 기존에는 bluetoothGatt.requestMtu(512)를 직접 호출해서 결과 콜백을 아예
-                        // 안 받고 있었다 — onMtuChanged가 실제로 왔는지 확인할 방법이 없었다.
-                        // GATTController의 requestMtu 래퍼로 바꿔서 결과를 명시적으로 로깅한다.
-                        val queued = HCBle.getGattController(address)?.requestMtu(512) { mtu, success ->
-                            Log.d(TAG, "MTU 협상 결과 콜백 수신: mtu=$mtu, success=$success")
-                        }
-                        Log.d(TAG, "MTU 협상 요청 (512) — 큐잉됨=$queued")
+                        // HIGH 인터벌에서 MTU 협상과 초기 셋업이 빨리 끝난다.
+                        // 이후 데이터 유휴가 지속되면 워치독이 BALANCED로 복귀시킨다.
+                        requestConnectionPriority(address, BluetoothGatt.CONNECTION_PRIORITY_HIGH)
+                        negotiateMtu(address)
                         SamsungServerSdk.getCallback()?.onConnected(device.name ?: address)
                     }
 
@@ -151,6 +178,7 @@ class WatchReceiverService : Service() {
                         serviceScope.launch(bleDispatcher) { reassembler.reset() }
                         if (sessionManager.isRecording) sessionManager.finishSession()
                         connectedDeviceAddress = null
+                        connectionPriorityHigh = false
                         SamsungServerSdk.getCallback()?.onDisconnected()
                     }
 
@@ -167,6 +195,7 @@ class WatchReceiverService : Service() {
             onReceive = { characteristic ->
                 @Suppress("DEPRECATION")
                 val data = characteristic.value?.copyOf() ?: return@connectToDevice
+                onDataActivity(address)
                 serviceScope.launch(bleDispatcher) {
                     reassembler.feed(data)
                 }
@@ -175,6 +204,100 @@ class WatchReceiverService : Service() {
             useBondingChangeState = false,
             maxRetries = 3
         )
+    }
+
+    // ── MTU 협상 ──────────────────────────────────────────────────────────────
+
+    /**
+     * MTU 협상을 요청하고, [MTU_TIMEOUT_MS] 안에 응답이 없거나 실패로 응답하면
+     * 최대 [MTU_MAX_ATTEMPTS]회까지 재시도한다.
+     *
+     * GATT가 busy일 때 요청이 유실되거나 onMtuChanged가 도착하지 않으면
+     * MTU가 기본값(23)으로 남아 전송이 극단적으로 느려지므로 재시도가 필수다.
+     */
+    private fun negotiateMtu(address: String, attempt: Int = 1) {
+        val controller = HCBle.getGattController(address) ?: run {
+            Log.e(TAG, "GATTController 취득 실패 — MTU 협상 불가: $address")
+            return
+        }
+
+        // 결과 콜백과 타임아웃 중 먼저 도달한 쪽만 처리한다.
+        val settled = AtomicBoolean(false)
+
+        val queued = controller.requestMtu(DESIRED_MTU) { mtu, success ->
+            if (!settled.compareAndSet(false, true)) return@requestMtu
+            if (success) {
+                Log.d(TAG, "MTU 협상 성공: mtu=$mtu (시도 $attempt/$MTU_MAX_ATTEMPTS)")
+            } else {
+                Log.w(TAG, "MTU 협상 실패 응답: mtu=$mtu (시도 $attempt/$MTU_MAX_ATTEMPTS)")
+                retryMtu(address, attempt)
+            }
+        }
+        Log.d(TAG, "MTU 협상 요청 ($DESIRED_MTU) — 큐잉됨=$queued, 시도=$attempt/$MTU_MAX_ATTEMPTS")
+
+        serviceScope.launch {
+            delay(MTU_TIMEOUT_MS)
+            if (settled.compareAndSet(false, true)) {
+                Log.w(TAG, "MTU 협상 응답 타임아웃 (시도 $attempt/$MTU_MAX_ATTEMPTS)")
+                retryMtu(address, attempt)
+            }
+        }
+    }
+
+    private fun retryMtu(address: String, attempt: Int) {
+        if (connectedDeviceAddress != address) return
+        if (attempt >= MTU_MAX_ATTEMPTS) {
+            Log.e(TAG, "MTU 협상 ${MTU_MAX_ATTEMPTS}회 모두 실패 — 기본 MTU로 동작합니다 (전송 저속 예상)")
+            return
+        }
+        negotiateMtu(address, attempt + 1)
+    }
+
+    // ── Connection Priority ──────────────────────────────────────────────────
+
+    /**
+     * 연결 인터벌 우선순위를 요청한다.
+     *
+     * HIGH(11~15ms)는 처리량을 높이지만 배터리를 소모하므로 데이터 수신 중에만 유지하고,
+     * [PRIORITY_IDLE_TIMEOUT_MS] 동안 수신이 없으면 워치독이 BALANCED로 복귀시킨다.
+     * API 31 미만에서는 결과 콜백이 없어 요청 수락 여부(반환값)만 확인 가능하다.
+     */
+    private fun requestConnectionPriority(address: String, priority: Int) {
+        val gatt = HCBle.getGattController(address)?.bluetoothGatt ?: run {
+            Log.w(TAG, "BluetoothGatt 취득 실패 — connection priority 요청 불가: $address")
+            return
+        }
+        val accepted = gatt.requestConnectionPriority(priority)
+        connectionPriorityHigh = priority == BluetoothGatt.CONNECTION_PRIORITY_HIGH
+        val name = if (connectionPriorityHigh) "HIGH" else "BALANCED"
+        Log.d(TAG, "Connection priority 요청: $name, 스택 수락=$accepted")
+        if (connectionPriorityHigh) startPriorityIdleWatchdog(address)
+    }
+
+    /**
+     * BLE 데이터 수신 시마다 호출. 유휴 타이머를 갱신하고,
+     * BALANCED로 내려가 있었다면 HIGH로 재요청한다 (워치가 절전 인터벌을
+     * 요청해 느려진 상태에서 전송이 시작되는 경우를 복구).
+     */
+    private fun onDataActivity(address: String) {
+        lastDataAtMs = SystemClock.elapsedRealtime()
+        if (!connectionPriorityHigh) {
+            requestConnectionPriority(address, BluetoothGatt.CONNECTION_PRIORITY_HIGH)
+        }
+    }
+
+    private fun startPriorityIdleWatchdog(address: String) {
+        if (priorityIdleWatchdog?.isActive == true) return
+        lastDataAtMs = SystemClock.elapsedRealtime()
+        priorityIdleWatchdog = serviceScope.launch {
+            while (connectionPriorityHigh && connectedDeviceAddress == address) {
+                delay(PRIORITY_IDLE_CHECK_MS)
+                if (SystemClock.elapsedRealtime() - lastDataAtMs >= PRIORITY_IDLE_TIMEOUT_MS) {
+                    Log.d(TAG, "데이터 유휴 ${PRIORITY_IDLE_TIMEOUT_MS}ms 경과 — BALANCED 복귀")
+                    requestConnectionPriority(address, BluetoothGatt.CONNECTION_PRIORITY_BALANCED)
+                }
+            }
+        }
     }
 
     // ── NUS 설정 ──────────────────────────────────────────────────────────────
