@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.bluetooth.BluetoothGatt
+import android.bluetooth.BluetoothGattCharacteristic
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
@@ -30,6 +31,14 @@ import kotlinx.coroutines.launch
 import kr.co.hconnect.bluetooth_sdk_android.gatt.BLEState
 
 private const val TAG = "WatchReceiverService"
+
+/**
+ * 프로브 윈도우: CCCD 구독 직후 워치가 프로브 사다리(3발 × 700ms)를 돌리는 시간.
+ * 이 동안 GATT write 큐는 PROBE_ACK 전용으로 비워둬야 한다 — 다른 write가
+ * 워치에서 거부되면(status=133) 내부 재시도 40회가 큐를 수 초 점유해
+ * ACK가 700ms 데드라인을 전부 놓친다 (2026-07-10 실측).
+ */
+private const val PROBE_WINDOW_MS = 3_500L
 
 /** 데이터 유휴 판정 시간. 이 시간 동안 수신이 없으면 connection priority를 BALANCED로 복귀한다. */
 private const val PRIORITY_IDLE_TIMEOUT_MS = 15_000L
@@ -225,8 +234,13 @@ class WatchReceiverService : Service() {
      * 워치는 이 값을 요청 크기(N)와 비교해 실효 청크 크기를 채택/기각하므로,
      * 반드시 "이 notify 한 건으로 도착한 크기"를 그대로 보내야 한다
      * (절단되어 20B만 왔으면 20 — 그래야 워치가 절단을 검출한다).
+     *
+     * ACK는 WRITE_TYPE_NO_RESPONSE로 보낸다 (2-14 요구):
+     * - 페이로드가 MTU 23에서도 단일 PDU에 들어가는 크기(≤17B)라 prepared write를 타지 않고,
+     * - 응답 대기가 없어 워치 GATT 서버의 write 응답 경로(133 거부) 영향을 받지 않는다.
      */
     private fun replyChunkProbe(data: ByteArray) {
+        val address = connectedDeviceAddress ?: return
         // 패딩(0xA5)은 UTF-8 비정상 바이트라 ISO_8859_1로 무손실 해석한다.
         val text = String(data, Charsets.ISO_8859_1)
         val seq = text.split(":").getOrNull(1)?.toIntOrNull()
@@ -235,8 +249,12 @@ class WatchReceiverService : Service() {
             return
         }
         val ack = "${NusConstants.PROBE_ACK_PREFIX}$seq:${data.size}"
-        Log.d(TAG, "청크 프로브 수신 ${data.size}B (seq=$seq) → \"$ack\" 회신")
-        writeToWatch(ack)
+        Log.d(TAG, "청크 프로브 수신 ${data.size}B (seq=$seq) → \"$ack\" 회신 (no-response write)")
+        HCBle.writeCharacteristic(
+            address,
+            ack.toByteArray(Charsets.UTF_8),
+            BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+        )
     }
 
     // ── Connection Priority ──────────────────────────────────────────────────
@@ -294,8 +312,15 @@ class WatchReceiverService : Service() {
         HCBle.setTargetWriteCharacteristicUUID(address, NusConstants.CHAR_WRITE_UUID)
         HCBle.setCharacteristicNotification(address, isEnable = true)
 
-        writeToWatch(NusConstants.CMD_SERVICE_RUNNING)
-        Log.d(TAG, "NUS 설정 완료, 데이터 수신 대기 중")
+        // CCCD 구독이 워치에 도착하는 순간 프로브가 시작되므로, 프로브 윈도우 동안
+        // write 큐를 PROBE_ACK 전용으로 비워둔다 (PROBE_WINDOW_MS 주석 참조).
+        serviceScope.launch {
+            delay(PROBE_WINDOW_MS)
+            if (connectedDeviceAddress == address) {
+                writeToWatch(NusConstants.CMD_SERVICE_RUNNING)
+            }
+        }
+        Log.d(TAG, "NUS 설정 완료, 데이터 수신 대기 중 (SERVICE_RUNNING은 프로브 윈도우 후 전송)")
     }
 
     // ── 워치에 명령 전송 ──────────────────────────────────────────────────────

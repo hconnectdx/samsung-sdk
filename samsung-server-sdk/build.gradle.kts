@@ -13,7 +13,7 @@ val localProperties = Properties().apply {
     if (file.exists()) load(FileInputStream(file))
 }
 
-val libVersion = "1.0.7"
+val libVersion = "1.0.8"
 
 protobuf {
     protoc {
