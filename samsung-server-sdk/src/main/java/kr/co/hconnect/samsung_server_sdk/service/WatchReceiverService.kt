@@ -28,18 +28,8 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kr.co.hconnect.bluetooth_sdk_android.gatt.BLEState
-import java.util.concurrent.atomic.AtomicBoolean
 
 private const val TAG = "WatchReceiverService"
-
-/** 요청 MTU. 협상 성공 시 청크당 페이로드 = MTU - 3 바이트. */
-private const val DESIRED_MTU = 512
-
-/** MTU 협상 응답(onMtuChanged) 대기 시간. 초과 시 재요청한다. */
-private const val MTU_TIMEOUT_MS = 3_000L
-
-/** MTU 협상 최대 시도 횟수. */
-private const val MTU_MAX_ATTEMPTS = 3
 
 /** 데이터 유휴 판정 시간. 이 시간 동안 수신이 없으면 connection priority를 BALANCED로 복귀한다. */
 private const val PRIORITY_IDLE_TIMEOUT_MS = 15_000L
@@ -166,10 +156,14 @@ class WatchReceiverService : Service() {
                     BLEState.STATE_CONNECTED -> {
                         connectedDeviceAddress = address
                         Log.d(TAG, "워치 연결됨: $address")
-                        // HIGH 인터벌에서 MTU 협상과 초기 셋업이 빨리 끝난다.
+                        // HIGH 인터벌에서 초기 셋업(CCCD 구독·프로브)이 빨리 끝난다.
                         // 이후 데이터 유휴가 지속되면 워치독이 BALANCED로 복귀시킨다.
                         requestConnectionPriority(address, BluetoothGatt.CONNECTION_PRIORITY_HIGH)
-                        negotiateMtu(address)
+                        // MTU 협상은 하지 않는다: EATT 연결에서 레거시 MTU 교환은 스택이
+                        // 전송하지 않아 onMtuChanged가 영원히 오지 않고(btsnoop 실측),
+                        // 그 MtuReq가 GATT 작업 큐 head를 잠가 CCCD 구독·프로브 ACK 등
+                        // 모든 후속 write를 막는다. 실효 청크 크기는 워치 프로브가 결정한다.
+                        Log.d(TAG, "MTU 협상 생략 — 청크 크기는 워치 프로브로 결정")
                         SamsungServerSdk.getCallback()?.onConnected(device.name ?: address)
                     }
 
@@ -196,8 +190,13 @@ class WatchReceiverService : Service() {
                 @Suppress("DEPRECATION")
                 val data = characteristic.value?.copyOf() ?: return@connectToDevice
                 onDataActivity(address)
-                serviceScope.launch(bleDispatcher) {
-                    reassembler.feed(data)
+                if (isChunkProbe(data)) {
+                    // 프로브는 프레임 스트림이 아니므로 재조립기에 넣지 않는다 (오염 방지).
+                    replyChunkProbe(data)
+                } else {
+                    serviceScope.launch(bleDispatcher) {
+                        reassembler.feed(data)
+                    }
                 }
             },
 
@@ -206,51 +205,38 @@ class WatchReceiverService : Service() {
         )
     }
 
-    // ── MTU 협상 ──────────────────────────────────────────────────────────────
+    // ── 청크 크기 프로브 응답 ─────────────────────────────────────────────────
 
     /**
-     * MTU 협상을 요청하고, [MTU_TIMEOUT_MS] 안에 응답이 없거나 실패로 응답하면
-     * 최대 [MTU_MAX_ATTEMPTS]회까지 재시도한다.
-     *
-     * GATT가 busy일 때 요청이 유실되거나 onMtuChanged가 도착하지 않으면
-     * MTU가 기본값(23)으로 남아 전송이 극단적으로 느려지므로 재시도가 필수다.
+     * 워치 청크 프로브(`PROBE:<seq>:<N>:` + 0xA5 패딩) 여부.
+     * 스택 절단으로 일부만 도착해도 접두는 앞 20B 안에 보존된다.
      */
-    private fun negotiateMtu(address: String, attempt: Int = 1) {
-        val controller = HCBle.getGattController(address) ?: run {
-            Log.e(TAG, "GATTController 취득 실패 — MTU 협상 불가: $address")
-            return
+    private fun isChunkProbe(data: ByteArray): Boolean {
+        val prefix = NusConstants.PROBE_PREFIX
+        if (data.size < prefix.length) return false
+        for (i in prefix.indices) {
+            if (data[i] != prefix[i].code.toByte()) return false
         }
-
-        // 결과 콜백과 타임아웃 중 먼저 도달한 쪽만 처리한다.
-        val settled = AtomicBoolean(false)
-
-        val queued = controller.requestMtu(DESIRED_MTU) { mtu, success ->
-            if (!settled.compareAndSet(false, true)) return@requestMtu
-            if (success) {
-                Log.d(TAG, "MTU 협상 성공: mtu=$mtu (시도 $attempt/$MTU_MAX_ATTEMPTS)")
-            } else {
-                Log.w(TAG, "MTU 협상 실패 응답: mtu=$mtu (시도 $attempt/$MTU_MAX_ATTEMPTS)")
-                retryMtu(address, attempt)
-            }
-        }
-        Log.d(TAG, "MTU 협상 요청 ($DESIRED_MTU) — 큐잉됨=$queued, 시도=$attempt/$MTU_MAX_ATTEMPTS")
-
-        serviceScope.launch {
-            delay(MTU_TIMEOUT_MS)
-            if (settled.compareAndSet(false, true)) {
-                Log.w(TAG, "MTU 협상 응답 타임아웃 (시도 $attempt/$MTU_MAX_ATTEMPTS)")
-                retryMtu(address, attempt)
-            }
-        }
+        return true
     }
 
-    private fun retryMtu(address: String, attempt: Int) {
-        if (connectedDeviceAddress != address) return
-        if (attempt >= MTU_MAX_ATTEMPTS) {
-            Log.e(TAG, "MTU 협상 ${MTU_MAX_ATTEMPTS}회 모두 실패 — 기본 MTU로 동작합니다 (전송 저속 예상)")
+    /**
+     * 프로브에 실제 수신 바이트 수를 회신한다.
+     * 워치는 이 값을 요청 크기(N)와 비교해 실효 청크 크기를 채택/기각하므로,
+     * 반드시 "이 notify 한 건으로 도착한 크기"를 그대로 보내야 한다
+     * (절단되어 20B만 왔으면 20 — 그래야 워치가 절단을 검출한다).
+     */
+    private fun replyChunkProbe(data: ByteArray) {
+        // 패딩(0xA5)은 UTF-8 비정상 바이트라 ISO_8859_1로 무손실 해석한다.
+        val text = String(data, Charsets.ISO_8859_1)
+        val seq = text.split(":").getOrNull(1)?.toIntOrNull()
+        if (seq == null) {
+            Log.w(TAG, "프로브 헤더 파싱 실패 — 무응답 (수신 ${data.size}B)")
             return
         }
-        negotiateMtu(address, attempt + 1)
+        val ack = "${NusConstants.PROBE_ACK_PREFIX}$seq:${data.size}"
+        Log.d(TAG, "청크 프로브 수신 ${data.size}B (seq=$seq) → \"$ack\" 회신")
+        writeToWatch(ack)
     }
 
     // ── Connection Priority ──────────────────────────────────────────────────

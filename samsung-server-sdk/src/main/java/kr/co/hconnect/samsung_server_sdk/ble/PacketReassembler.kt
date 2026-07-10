@@ -1,11 +1,20 @@
 package kr.co.hconnect.samsung_server_sdk.ble
 
+import android.os.SystemClock
 import android.util.Log
 import com.google.protobuf.InvalidProtocolBufferException
 import kr.co.hconnect.samsung_server_sdk.proto.SensorBufferProto
 import java.io.ByteArrayOutputStream
 
 private const val TAG = "PacketReassembler"
+
+/**
+ * 수신 공백 후 미완성 버퍼 폐기 기준.
+ * 워치는 청크 실패/2초 타임아웃 시 잔여 청크를 폐기하고 다음 패킷으로 넘어가므로,
+ * 이 시간 이상 공백 후 도착하는 데이터는 새 패킷의 시작이다 — 남아 있던 부분 프레임과
+ * 이어 붙이면 스트림이 영구히 어긋난다 (한 번 어긋나면 링크가 죽을 때까지 전 데이터 폐기됨).
+ */
+private const val STALL_RESET_MS = 5_000L
 
 /**
  * BLE Notification으로 분할 수신된 데이터를 완성된 메시지로 조립한다.
@@ -30,8 +39,21 @@ internal class PacketReassembler(
 
     private val buffer = ByteArrayOutputStream()
 
+    /** 마지막 수신 시각 (elapsedRealtime). 정체 판정 기준. */
+    private var lastFeedAtMs = 0L
+
     /** BLE Notification으로 수신된 원시 바이트를 공급한다. */
     fun feed(data: ByteArray) {
+        val now = SystemClock.elapsedRealtime()
+        if (buffer.size() > 0 && lastFeedAtMs > 0 && now - lastFeedAtMs >= STALL_RESET_MS) {
+            Log.w(
+                TAG,
+                "수신 공백 ${now - lastFeedAtMs}ms — 미완성 버퍼 ${buffer.size()}B 폐기 후 재동기화"
+            )
+            buffer.reset()
+        }
+        lastFeedAtMs = now
+
         val hex = data.take(20).joinToString(" ") { "%02X".format(it) }
         val ascii = data.take(32).map { b ->
             val c = b.toInt() and 0xFF
@@ -57,6 +79,7 @@ internal class PacketReassembler(
     /** 버퍼와 조립 상태를 초기화한다. */
     fun reset() {
         buffer.reset()
+        lastFeedAtMs = 0L
         Log.d(TAG, "버퍼 초기화")
     }
 

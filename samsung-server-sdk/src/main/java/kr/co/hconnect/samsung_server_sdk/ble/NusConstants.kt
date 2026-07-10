@@ -29,4 +29,14 @@ internal object NusConstants {
 
     /** 워치에 수면측정 종료를 요청하는 명령 문자열 */
     const val CMD_MEASUREMENT_CONTROL_STOP_SLEEP = "MEASUREMENT_CONTROL:STOP_SLEEP"
+
+    /**
+     * 워치 청크 크기 프로브 접두 (peripheral SDK 1.0.2+).
+     * 프레임: `PROBE:<seq>:<N>:` ASCII + 0xA5 패딩, 길이 헤더 없는 raw notify 1건.
+     * 절단 도착해도 앞 20B 안에 접두·seq가 보존되므로 항상 식별 가능하다.
+     */
+    const val PROBE_PREFIX = "PROBE:"
+
+    /** 프로브 응답 접두 — `PROBE_ACK:<seq>:<실제 수신 바이트수>` 를 RX write로 회신 */
+    const val PROBE_ACK_PREFIX = "PROBE_ACK:"
 }
