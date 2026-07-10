@@ -33,6 +33,13 @@ import kr.co.hconnect.bluetooth_sdk_android.gatt.BLEState
 private const val TAG = "WatchReceiverService"
 
 /**
+ * 선제 MTU 요청 값. 협상 성공 시 notify 페이로드 = MTU - 3 바이트.
+ * 연결 직후 EATT 채널이 수립되기 전(~150-400ms)의 틈을 노려 레거시 bearer에서
+ * 교환을 시도한다 — EATT 수립 후에는 스택이 요청을 전송하지 않는다 (btsnoop 실측).
+ */
+private const val DESIRED_MTU = 512
+
+/**
  * 프로브 윈도우: CCCD 구독 직후 워치가 프로브 사다리(3발 × 700ms)를 돌리는 시간.
  * 이 동안 GATT write 큐는 PROBE_ACK 전용으로 비워둬야 한다 — 다른 write가
  * 워치에서 거부되면(status=133) 내부 재시도 40회가 큐를 수 초 점유해
@@ -165,14 +172,18 @@ class WatchReceiverService : Service() {
                     BLEState.STATE_CONNECTED -> {
                         connectedDeviceAddress = address
                         Log.d(TAG, "워치 연결됨: $address")
+                        // 선제 MTU 발사: EATT가 깔리기 전 레거시 bearer에서 교환을 시도.
+                        // 성공하면 notify 경로 자체가 (MTU-3)B가 되어 프로브 없이 해결된다.
+                        // 반드시 raw 호출이어야 한다 — GATTController 큐를 경유하면 EATT에
+                        // 삼켜졌을 때 MtuReq가 head를 영구 잠가 CCCD·프로브 ACK까지 죽는다.
+                        // raw 호출은 큐를 점유하지 않으므로 실패해도 프로브 폴백에 영향 없음.
+                        // 성공 판정: BLE_SDK "MTU negotiated: 23 -> 517" 로그.
+                        val fired = HCBle.getGattController(address)
+                            ?.bluetoothGatt?.requestMtu(DESIRED_MTU) ?: false
+                        Log.d(TAG, "선제 MTU($DESIRED_MTU) 요청 (raw, 큐 미경유) — 발사=$fired")
                         // HIGH 인터벌에서 초기 셋업(CCCD 구독·프로브)이 빨리 끝난다.
                         // 이후 데이터 유휴가 지속되면 워치독이 BALANCED로 복귀시킨다.
                         requestConnectionPriority(address, BluetoothGatt.CONNECTION_PRIORITY_HIGH)
-                        // MTU 협상은 하지 않는다: EATT 연결에서 레거시 MTU 교환은 스택이
-                        // 전송하지 않아 onMtuChanged가 영원히 오지 않고(btsnoop 실측),
-                        // 그 MtuReq가 GATT 작업 큐 head를 잠가 CCCD 구독·프로브 ACK 등
-                        // 모든 후속 write를 막는다. 실효 청크 크기는 워치 프로브가 결정한다.
-                        Log.d(TAG, "MTU 협상 생략 — 청크 크기는 워치 프로브로 결정")
                         SamsungServerSdk.getCallback()?.onConnected(device.name ?: address)
                     }
 
