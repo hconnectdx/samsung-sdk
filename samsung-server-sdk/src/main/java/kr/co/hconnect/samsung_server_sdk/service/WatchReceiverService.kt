@@ -94,7 +94,10 @@ class WatchReceiverService : Service() {
         }
 
         dataWriter = DataWriter(this)
-        sessionManager = SessionManager(callback, dataWriter)
+        sessionManager = SessionManager(
+            callback = callback,
+            dataWriter = dataWriter,
+        )
         reassembler = PacketReassembler(
             onMessage = { proto -> sessionManager.process(proto) },
             onMeasurementType = { type -> sessionManager.onMeasurementType(type) },

@@ -13,7 +13,7 @@ val localProperties = Properties().apply {
     if (file.exists()) load(FileInputStream(file))
 }
 
-val libVersion = "1.0.9"
+val libVersion = "1.0.10"
 
 protobuf {
     protoc {
@@ -74,7 +74,7 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.okhttp.logging.interceptor)
 
-    implementation("kr.co.hconnect:bluetooth-sdk-android-v2:1.0.10")
+    implementation("kr.co.hconnect:bluetooth-sdk-android-v2:1.0.11")
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

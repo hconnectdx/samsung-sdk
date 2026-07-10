@@ -26,6 +26,12 @@ import java.util.Locale
 private const val TAG = "SessionManager"
 
 /**
+ * ECG 세션의 안전장치용 최대 지속시간. 워치 앱의 자체 타임아웃(90초)보다 여유를 두되,
+ * STOP 알림이 유실됐을 때 세션이 무한히 누적되는 걸 막기 위한 하드 캡이다.
+ */
+private const val MAX_ECG_SESSION_DURATION_MS = 100_000L
+
+/**
  * 워치에서 수신한 [SensorBufferProto]를 처리하여 세션 상태를 관리하고
  * 파싱된 이벤트를 [ServerSdkCallback]으로 전달하며,
  * [DataWriter]를 통해 센서 데이터를 CSV 파일로 저장하고 API 로 전송한다.
@@ -57,6 +63,9 @@ internal class SessionManager(
 
     /** 세션별 센서 타입별 누적 샘플 수. */
     private val sampleCounts = mutableMapOf<SensorType, Int>()
+
+    /** 현재 세션이 시작된 시각 (ms) — ECG 세션의 비정상 장기화 감지용. */
+    @Volatile private var currentSessionStartedAtMs: Long = 0L
 
     fun process(proto: SensorBufferProto) {
         val metadata = if (proto.hasMetadata()) proto.metadata else null
@@ -135,6 +144,25 @@ internal class SessionManager(
                         )
                         currentMeasurementType = type
                         currentSessionId?.let { callback.onMeasurementStarted(it, type) }
+                        return
+                    }
+
+                    // 같은 타입으로 재시작 알림이 온 경우 — 정상적으로는 워치가 이미 아는 세션을
+                    // 이어가는 것뿐이라 무시해야 한다. 하지만 ECG는 워치가 자체 타임아웃(90초)으로
+                    // 멈췄는데 STOP 알림이 BLE로 전달되지 못했을 가능성이 있다 — 그 경우 세션이
+                    // 비정상적으로 길게 살아남아 다음 측정 데이터가 옛 세션에 계속 누적된다.
+                    // 그래서 세션 지속시간이 안전 캡을 넘겼으면 강제로 종료 후 새로 시작한다.
+                    if (type == MeasurementType.ECG) {
+                        val elapsed = System.currentTimeMillis() - currentSessionStartedAtMs
+                        if (elapsed > MAX_ECG_SESSION_DURATION_MS) {
+                            Log.w(
+                                TAG,
+                                "ECG 세션이 ${elapsed}ms 동안 지속됨(비정상) — STOP 알림 유실로 추정, " +
+                                        "세션 강제 재시작 (session=$currentSessionId)"
+                            )
+                            finishSession()
+                            startMeasurementSession(type)
+                        }
                     }
                     return
                 }
@@ -198,6 +226,7 @@ internal class SessionManager(
         currentSessionId = sessionId
         currentMeasurementType = type
         isRecording = true
+        currentSessionStartedAtMs = System.currentTimeMillis()
         sampleCounts.clear()
 
         dataWriter.beginSession(sessionId)
