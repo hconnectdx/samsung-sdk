@@ -31,7 +31,7 @@ internal object NusConstants {
     const val CMD_MEASUREMENT_CONTROL_STOP_SLEEP = "MEASUREMENT_CONTROL:STOP_SLEEP"
 
     /**
-     * 워치 청크 크기 프로브 접두 (peripheral SDK 1.0.2+).
+     * 워치 청크 크기 프로브 접두 (peripheral SDK 1.0.1+).
      * 프레임: `PROBE:<seq>:<N>:` ASCII + 0xA5 패딩, 길이 헤더 없는 raw notify 1건.
      * 절단 도착해도 앞 20B 안에 접두·seq가 보존되므로 항상 식별 가능하다.
      */
