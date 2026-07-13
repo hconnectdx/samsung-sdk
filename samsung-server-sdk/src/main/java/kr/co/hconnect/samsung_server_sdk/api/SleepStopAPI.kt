@@ -20,7 +20,7 @@ import org.json.JSONObject
 internal object SleepStopAPI {
 
     private const val TAG = "SleepStopAPI"
-    private const val ENDPOINT = "poli/sleep/stop"
+    private const val ENDPOINT = "poli/sleep/stop-1"
 
     private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
 
