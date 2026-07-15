@@ -28,7 +28,7 @@ internal object SleepStopAPI {
         val httpCode: Int,
         val body: String,
         val success: Boolean,
-        /** 수면 품질 점수. 서버 응답 JSON 의 `sleepQuality` 필드. 파싱 실패 시 null. */
+        /** 수면 품질 점수. 서버 응답 JSON 의 `data.sleepQuality` 필드. 파싱 실패 시 null. */
         val sleepQuality: Int? = null,
     )
 
@@ -81,9 +81,9 @@ internal object SleepStopAPI {
 
             val sleepQuality: Int? = if (response.isSuccessful) {
                 try {
-                    JSONObject(resBody).let { json ->
-                        if (json.isNull("sleepQuality")) null
-                        else json.getInt("sleepQuality")
+                    JSONObject(resBody).optJSONObject("data")?.let { data ->
+                        if (data.isNull("sleepQuality")) null
+                        else data.getInt("sleepQuality")
                     }
                 } catch (_: JSONException) {
                     null
