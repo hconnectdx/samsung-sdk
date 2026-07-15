@@ -96,7 +96,7 @@ internal class SessionManager(
                     // ② 새 청크를 위해 DataWriter 를 다시 시작한다
                     // ③ 파일을 protocol8-1 로 비동기 전송한다
                     val sessionId = currentSessionId
-                    if (sessionId != null) {
+                    if (sessionId != null && sampleCounts.isNotEmpty()) {
                         val chunkTotal = sampleCounts.entries
                             .joinToString(" | ") { (t, n) -> "$t=$n" }.ifEmpty { "없음" }
                         val chunkDir = dataWriter.closeAll()
@@ -107,6 +107,10 @@ internal class SessionManager(
                             Log.d(TAG, "SLEEP 청크 FINISH — protocol8-1 파일 전송 (session=$sessionId dir=${chunkDir.name}) 청크샘플 [$chunkTotal]")
                             apiScope.launch { sendProtocol8_1Files(sessionId, chunkDir) }
                         }
+                    } else if (sessionId != null) {
+                        // 직전 청크 시작 이후 샘플이 하나도 없다 — 중복/재전송된 FINISH 로 판단하고 무시한다.
+                        // (그렇지 않으면 closeAll()+beginSession() 이 다시 실행되어 빈 청크 폴더가 1초 이내 간격으로 하나 더 생성된다)
+                        Log.w(TAG, "SLEEP FINISH 무시 — 직전 청크 시작 이후 샘플 없음(중복 FINISH 추정) session=$sessionId")
                     }
                 } else {
                     finishSession()

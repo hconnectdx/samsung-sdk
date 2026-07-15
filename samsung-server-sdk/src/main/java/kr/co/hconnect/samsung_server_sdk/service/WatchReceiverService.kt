@@ -192,8 +192,15 @@ class WatchReceiverService : Service() {
 
                     BLEState.STATE_DISCONNECTED -> {
                         Log.d(TAG, "워치 연결 해제: $address")
-                        serviceScope.launch(bleDispatcher) { reassembler.reset() }
-                        if (sessionManager.isRecording) sessionManager.finishSession()
+                        // reassembler.reset() 과 finishSession() 은 반드시 bleDispatcher 위에서
+                        // 순서대로 실행해야 한다. finishSession()을 콜백 스레드에서 직접 호출하면
+                        // 이미 bleDispatcher에 큐잉된 reassembler.feed()/process() 처리와 레이스가
+                        // 발생해 DataWriter/SessionManager의 공유 상태(writers, sessionDir 등)가
+                        // 꼬일 수 있다.
+                        serviceScope.launch(bleDispatcher) {
+                            reassembler.reset()
+                            if (sessionManager.isRecording) sessionManager.finishSession()
+                        }
                         connectedDeviceAddress = null
                         connectionPriorityHigh = false
                         SamsungServerSdk.getCallback()?.onDisconnected()

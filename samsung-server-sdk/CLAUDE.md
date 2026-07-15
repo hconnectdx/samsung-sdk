@@ -74,9 +74,9 @@ SamsungServerSdk (object)
 Download/SamsungServerSdk/           ← MANAGE_EXTERNAL_STORAGE 권한 있을 때
   └── 2026-04-29/
       └── 15_30_00/
-          ├── ACC.csv         (timestamp,x,y,z)
+          ├── ACC.csv         (x,y,z) - timestamp 제거
           ├── ECG.csv         (value)
-          ├── PPG_GREEN_25.csv  (green,ir,red)
+          ├── PPG_GREEN_25.csv  (green,ir,red) - ir, green, red 순으로 서버에서 변경함
           └── PPG_GREEN_100.csv (green,ir,red)
 ```
 
